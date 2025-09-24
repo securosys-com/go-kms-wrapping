@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Securosys SA.
+
 package securosyshsm
 
 import (
