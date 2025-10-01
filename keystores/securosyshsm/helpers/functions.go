@@ -28,6 +28,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/rand"
 	"reflect"
@@ -110,22 +111,62 @@ func WrapPublicKeyWithHeaders(publicKey string) []byte {
 func PrepareFullPolicy(policyString string, simplified bool, addKeyStatus bool) (*kms.Policy, error) {
 	var PolicyObj kms.Policy
 	if simplified == true {
+
 		var simplePolicy map[string]string
 		err := json.Unmarshal([]byte(policyString), &simplePolicy)
-		if err != nil {
-			return nil, err
-		}
-		token := PreparePolicyTokens(simplePolicy)
-		PolicyObj.RuleUse.Tokens = append(PolicyObj.RuleUse.Tokens, token)
-		PolicyObj.RuleBlock = new(kms.Rule)
-		PolicyObj.RuleBlock.Tokens = append(PolicyObj.RuleBlock.Tokens, token)
-		PolicyObj.RuleUnBlock = new(kms.Rule)
-		PolicyObj.RuleUnBlock.Tokens = append(PolicyObj.RuleUnBlock.Tokens, token)
-		PolicyObj.RuleModify = new(kms.Rule)
-		PolicyObj.RuleModify.Tokens = append(PolicyObj.RuleModify.Tokens, token)
-		if addKeyStatus == true {
-			PolicyObj.KeyStatus = new(kms.KeyStatus)
-			PolicyObj.KeyStatus.Blocked = false
+		if err == nil {
+			token := PreparePolicyTokens(simplePolicy)
+			PolicyObj.RuleUse.Tokens = append(PolicyObj.RuleUse.Tokens, token)
+			PolicyObj.RuleBlock = new(kms.Rule)
+			PolicyObj.RuleBlock.Tokens = append(PolicyObj.RuleBlock.Tokens, token)
+			PolicyObj.RuleUnBlock = new(kms.Rule)
+			PolicyObj.RuleUnBlock.Tokens = append(PolicyObj.RuleUnBlock.Tokens, token)
+			PolicyObj.RuleModify = new(kms.Rule)
+			PolicyObj.RuleModify.Tokens = append(PolicyObj.RuleModify.Tokens, token)
+			if addKeyStatus == true {
+				PolicyObj.KeyStatus = new(kms.KeyStatus)
+				PolicyObj.KeyStatus.Blocked = false
+			}
+		} else {
+			var simplePolicy map[string]map[string]string
+			err := json.Unmarshal([]byte(policyString), &simplePolicy)
+			if err != nil {
+				return nil, err
+			}
+			if simplePolicy["use"] != nil {
+				token := PreparePolicyTokens(simplePolicy["use"])
+				PolicyObj.RuleUse.Tokens = append(PolicyObj.RuleUse.Tokens, token)
+			} else {
+				token := PreparePolicyTokens(make(map[string]string))
+				PolicyObj.RuleUse.Tokens = append(PolicyObj.RuleUse.Tokens, token)
+			}
+			if simplePolicy["block"] != nil {
+				token := PreparePolicyTokens(simplePolicy["block"])
+				PolicyObj.RuleBlock.Tokens = append(PolicyObj.RuleBlock.Tokens, token)
+			} else {
+				token := PreparePolicyTokens(make(map[string]string))
+				PolicyObj.RuleBlock.Tokens = append(PolicyObj.RuleBlock.Tokens, token)
+			}
+			if simplePolicy["unblock"] != nil {
+				token := PreparePolicyTokens(simplePolicy["unblock"])
+				PolicyObj.RuleUnBlock.Tokens = append(PolicyObj.RuleUnBlock.Tokens, token)
+			} else {
+				token := PreparePolicyTokens(make(map[string]string))
+				PolicyObj.RuleUnBlock.Tokens = append(PolicyObj.RuleUnBlock.Tokens, token)
+			}
+			if simplePolicy["modify"] != nil {
+				token := PreparePolicyTokens(simplePolicy["modify"])
+				PolicyObj.RuleModify.Tokens = append(PolicyObj.RuleModify.Tokens, token)
+			} else {
+				token := PreparePolicyTokens(make(map[string]string))
+				PolicyObj.RuleModify.Tokens = append(PolicyObj.RuleModify.Tokens, token)
+			}
+
+			if addKeyStatus == true {
+				PolicyObj.KeyStatus = new(kms.KeyStatus)
+				PolicyObj.KeyStatus.Blocked = false
+			}
+
 		}
 	} else {
 		err := json.Unmarshal([]byte(policyString), &PolicyObj)
@@ -308,4 +349,75 @@ func BytesToPublicKey(pub []byte) any {
 		return nil
 	}
 	return ifc
+}
+func MapSignAlgorithm(alg kms.SignAlgorithm) (string, error) {
+	switch alg {
+	case kms.Sign_SHA224_RSA_PKCS1_PSS:
+		return "SHA224_WITH_RSA_PSS", nil
+	case kms.Sign_SHA256_RSA_PKCS1_PSS:
+		return "SHA256_WITH_RSA_PSS", nil
+	case kms.Sign_SHA384_RSA_PKCS1_PSS:
+		return "SHA384_WITH_RSA_PSS", nil
+	case kms.Sign_SHA512_RSA_PKCS1_PSS:
+		return "SHA512_WITH_RSA_PSS", nil
+	case kms.Sign_SHA224_RSA:
+		return "SHA224_WITH_RSA", nil
+	case kms.Sign_SHA256_RSA:
+		return "SHA256_WITH_RSA", nil
+	case kms.Sign_SHA384_RSA:
+		return "SHA384_WITH_RSA", nil
+	case kms.Sign_SHA512_RSA:
+		return "SHA512_WITH_RSA", nil
+
+	case kms.Sign_SHA1_ECDSA:
+		return "SHA1_WITH_ECDSA", nil
+	case kms.Sign_SHA224_ECDSA:
+		return "SHA224_WITH_ECDSA", nil
+	case kms.Sign_SHA256_ECDSA:
+		return "SHA256_WITH_ECDSA", nil
+	case kms.Sign_SHA384_ECDSA:
+		return "SHA384_WITH_ECDSA", nil
+	case kms.Sign_SHA512_ECDSA:
+		return "SHA512_WITH_ECDSA", nil
+	case kms.Sign_SHA3224_ECDSA:
+		return "SHA3224_WITH_ECDSA", nil
+	case kms.Sign_SHA3256_ECDSA:
+		return "SHA3256_WITH_ECDSA", nil
+	case kms.Sign_SHA3384_ECDSA:
+		return "SHA3384_WITH_ECDSA", nil
+	case kms.Sign_SHA3512_ECDSA:
+		return "SHA3512_WITH_ECDSA", nil
+
+	}
+	return "", errors.New("unknown cipher algorithm")
+
+}
+func MapCipherAlgorithm(alg kms.CipherAlgorithmMode) (string, error) {
+	switch alg {
+	case kms.Cipher_AES_GCM:
+		return "AES_GCM", nil
+	case kms.Cipher_AES_CBC:
+		return "AES_CBC_NO_PADDING", nil
+	case kms.Cipher_AES_ECB:
+		return "AES_ECB", nil
+	case kms.Cipher_AES_CTR:
+		return "AES_CTR", nil
+	case kms.Cipher_RSA_MODE:
+		return "RSA", nil
+	case kms.Cipher_RSA_PADDING_OAEP:
+		return "RSA_PADDING_OAEP", nil
+	case kms.Cipher_RSA_PADDING_OAEP_SHA1:
+		return "RSA_PADDING_OAEP_WITH_SHA1", nil
+	case kms.Cipher_RSA_PADDING_OAEP_SHA224:
+		return "RSA_PADDING_OAEP_WITH_SHA224", nil
+	case kms.Cipher_RSA_PADDING_OAEP_SHA256:
+		return "RSA_PADDING_OAEP_WITH_SHA256", nil
+	case kms.Cipher_RSA_PADDING_OAEP_SHA384:
+		return "RSA_PADDING_OAEP_WITH_SHA384", nil
+	case kms.Cipher_RSA_PADDING_OAEP_SHA512:
+		return "RSA_PADDING_OAEP_WITH_SHA512", nil
+
+	}
+	return "", errors.New("unknown cipher algorithm")
+
 }

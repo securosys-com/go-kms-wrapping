@@ -3,6 +3,7 @@
 package securosyshsm
 
 import (
+	b64 "encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -26,7 +27,20 @@ type KeyStore struct {
 	closed   bool
 }
 
-func (s *KeyStore) GenerateSecretKey(keyAttributes *kms.KeyAttributes, password string) (kms.Key, error) {
+func (s *KeyStore) GenerateRandom(length int) (random []byte, err error) {
+	if length < 1 {
+		return nil, errors.New("length must be greater than zero")
+	}
+	generateRandom, _, err := s.client.GenerateRandom(length)
+	if err != nil {
+		return nil, err
+	}
+	random, _ = b64.StdEncoding.DecodeString(generateRandom.Random)
+	return random, nil
+
+}
+
+func (s *KeyStore) GenerateSecretKey(keyAttributes *kms.KeyAttributes, password ...string) (kms.Key, error) {
 	keyType := ""
 	switch keyAttributes.KeyType {
 	case kms.AESKey:
@@ -34,25 +48,29 @@ func (s *KeyStore) GenerateSecretKey(keyAttributes *kms.KeyAttributes, password 
 		break
 	}
 	attributes := attributesMapper(keyAttributes)
+	keyPassword := ""
+	if password != nil && len(password) > 0 {
+		keyPassword = password[0]
+	}
 
-	key, err := s.client.CreateOrUpdateKey(keyAttributes.Name, password, attributes, keyType, float64(keyAttributes.BitKeyLen), nil, "", false)
+	key, err := s.client.CreateOrUpdateKey(keyAttributes.Name, keyPassword, attributes, keyType, float64(keyAttributes.BitKeyLen), nil, "", false)
 	if err != nil {
 		return nil, err
 	}
 
-	getKey, err := s.client.GetKey(key, password)
+	getKey, err := s.client.GetKey(key, keyPassword)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Key{
 		client:   s.client,
-		password: password,
+		password: keyPassword,
 		key:      getKey,
 	}, nil
 }
 
-func (s *KeyStore) GenerateKeyPair(keyPairAttributes *kms.KeyAttributes, password string) (privateKey kms.Key, publicKey kms.Key, err error) {
+func (s *KeyStore) GenerateKeyPair(keyPairAttributes *kms.KeyAttributes, password ...string) (privateKey kms.Key, publicKey kms.Key, err error) {
 	keyType := ""
 	var curveOid string
 	var keySize float64
@@ -68,25 +86,30 @@ func (s *KeyStore) GenerateKeyPair(keyPairAttributes *kms.KeyAttributes, passwor
 		keySize = 0
 		break
 	}
-	attributes := attributesMapper(keyPairAttributes)
 
-	key, err := s.client.CreateOrUpdateKey(keyPairAttributes.Name, password, attributes, keyType, keySize, keyPairAttributes.GetPolicy, curveOid, false)
+	attributes := attributesMapper(keyPairAttributes)
+	keyPassword := ""
+	if password != nil && len(password) > 0 {
+		keyPassword = password[0]
+	}
+
+	key, err := s.client.CreateOrUpdateKey(keyPairAttributes.Name, keyPassword, attributes, keyType, keySize, keyPairAttributes.Policy, curveOid, false)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	getKey, err := s.client.GetKey(key, password)
+	getKey, err := s.client.GetKey(key, keyPassword)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	return &Key{
 			client:   s.client,
-			password: password,
+			password: keyPassword,
 			key:      getKey,
 		}, &Key{
 			client:   s.client,
-			password: password,
+			password: keyPassword,
 			key:      getKey,
 		}, nil
 }
@@ -120,7 +143,7 @@ func (s *KeyStore) ListKeys() ([]kms.Key, error) {
 		key, err := s.client.GetKey(keyLabel, "")
 		if err == nil {
 			//TEMPORARY DISABLE OTHER KEYS
-			if key.Algorithm == "RSA" || key.Algorithm == "AES" {
+			if key.Algorithm == "RSA" || key.Algorithm == "AES" || key.Algorithm == "EC" {
 				mappedKeys = append(mappedKeys, &Key{
 					client:   s.client,
 					password: "",
@@ -134,26 +157,34 @@ func (s *KeyStore) ListKeys() ([]kms.Key, error) {
 	return mappedKeys, nil
 }
 
-func (s *KeyStore) GetKeyById(keyId string) (kms.Key, error) {
-	key, err := s.client.GetKey(keyId, "")
+func (s *KeyStore) GetKeyById(keyId string, password ...string) (kms.Key, error) {
+	keyPassword := ""
+	if password != nil && len(password) > 0 {
+		keyPassword = password[0]
+	}
+	key, err := s.client.GetKey(keyId, keyPassword)
 	if err != nil {
 		return nil, err
 	}
 	return &Key{
 		client:   s.client,
-		password: "",
+		password: keyPassword,
 		key:      key,
 	}, nil
 }
 
-func (s *KeyStore) GetKeyByName(keyName string) (kms.Key, error) {
-	key, err := s.client.GetKey(keyName, "")
+func (s *KeyStore) GetKeyByName(keyName string, password ...string) (kms.Key, error) {
+	keyPassword := ""
+	if password != nil && len(password) > 0 {
+		keyPassword = password[0]
+	}
+	key, err := s.client.GetKey(keyName, keyPassword)
 	if err != nil {
 		return nil, err
 	}
 	return &Key{
 		client:   s.client,
-		password: "",
+		password: keyPassword,
 		key:      key,
 	}, nil
 }

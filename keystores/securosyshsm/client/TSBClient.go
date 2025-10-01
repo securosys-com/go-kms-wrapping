@@ -35,6 +35,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -90,6 +91,7 @@ const (
 
 // Function inicialize new client for accessing TSB
 func NewTSBClient(restApi string, settings AuthStruct) (*TSBClient, error) {
+	restApi = strings.TrimSuffix(restApi, "/")
 	c := TSBClient{
 		HTTPClient: &http.Client{Timeout: 9999999 * time.Second},
 		HostURL:    restApi,

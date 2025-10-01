@@ -30,7 +30,8 @@ type KeyAttributes struct {
 	IsPersistent bool
 	IsRemovable  bool
 	IsSensitive  bool
-	GetPolicy    *Policy
+
+	Policy *Policy
 
 	// Key usages:
 	CanEncrypt                  bool

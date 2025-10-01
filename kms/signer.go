@@ -27,8 +27,9 @@ const (
 	Sign_SHA384_ECDSA                       = iota
 	Sign_SHA512_ECDSA                       = iota
 	Sign_SHA3224_ECDSA                      = iota
-	Sign_SHA3384_ECDSA                      = iota
-	Sign_SHA3512_ECDSA                      = iota
+	Sign_SHA3256_ECDSA
+	Sign_SHA3384_ECDSA = iota
+	Sign_SHA3512_ECDSA = iota
 )
 
 // MAC_Algorithm represents MAC algorithms

@@ -26,10 +26,10 @@ type CipherAlgorithmMode int
 
 const (
 	// Unsafe cipher modes have been disabled until such time as required.
-	// Cipher_AES_ECB CipherAlgorithm = iota
-	// Cipher_AES_CBC
-	// Cipher_AES_CTR
-	Cipher_AES_GCM CipherAlgorithmMode = iota + 3 // 3
+	Cipher_AES_ECB CipherAlgorithmMode = iota
+	Cipher_AES_CBC
+	Cipher_AES_CTR
+	Cipher_AES_GCM // 3
 	Cipher_RSA_MODE
 	Cipher_RSA_PADDING_OAEP
 	Cipher_RSA_PADDING_OAEP_SHA1
@@ -44,7 +44,7 @@ type Padding int
 
 const (
 	NoPadding Padding = iota
-
+	
 	// PKCS5Padding has been disabled as it is not required by AES-GCM mode.
 	// PKCS5Padding Padding = iota
 )

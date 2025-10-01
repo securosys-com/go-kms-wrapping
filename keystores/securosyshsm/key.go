@@ -47,6 +47,8 @@ func (s Key) GetType() kms.KeyType {
 		return kms.PrivateRSAKey
 	case "AES":
 		return kms.AESKey
+	case "EC":
+		return kms.PrivateECKey
 	}
 	return kms.UnSupportedKey
 }

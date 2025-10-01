@@ -6,6 +6,7 @@ import (
 	b64 "encoding/base64"
 	"errors"
 
+	"github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/helpers"
 	kms "github.com/openbao/go-kms-wrapping/v2/kms"
 )
 
@@ -18,31 +19,23 @@ type Verifier struct {
 	buffer         []byte
 }
 
-func (s Verifier) Update(data []byte) error {
+func (s *Verifier) Update(data []byte) error {
 	s.buffer = append(s.buffer, data...)
 	return nil
 }
 
-func (s Verifier) Close(data []byte) error {
+func (s *Verifier) Close(data []byte) error {
 	s.buffer = append(s.buffer, data...)
 	return s.verifySignature(data, s.verifierParams.Signature)
 }
 
-func (s Verifier) CloseEx(data []byte, signature []byte) error {
+func (s *Verifier) CloseEx(data []byte, signature []byte) error {
 	s.buffer = append(s.buffer, data...)
 	return s.verifySignature(data, signature)
 }
 
-func (s Verifier) verifySignature(data []byte, signature []byte) error {
-	signatureAlgorithm := ""
-	switch s.verifierParams.Algorithm {
-	case kms.Sign_SHA256_RSA_PKCS1_PSS:
-		signatureAlgorithm = "SHA256_WITH_RSA_PSS"
-		break
-	case kms.Sign_SHA512_RSA_PKCS1_PSS:
-		signatureAlgorithm = "SHA512_WITH_RSA_PSS"
-		break
-	}
+func (s *Verifier) verifySignature(data []byte, signature []byte) error {
+	signatureAlgorithm, _ := helpers.MapSignAlgorithm(s.verifierParams.Algorithm)
 	result, _, err := s.key.client.Verify(
 		s.key.GetName(),
 		s.key.password,
@@ -68,8 +61,8 @@ type VerifierFactory struct {
 }
 
 func (s VerifierFactory) NewVerifier(publicKey kms.Key, verifierParams *kms.VerifierParameters) (kms.Verifier, error) {
-	if publicKey.GetType() != kms.PrivateRSAKey {
-		return nil, errors.New("invalid key type. Only RSA keys are supported")
+	if publicKey.GetType() != kms.PrivateRSAKey && publicKey.GetType() != kms.PrivateECKey {
+		return nil, errors.New("invalid key type. Only RSA and EC keys are supported")
 	}
 	sk, ok := publicKey.(*Key)
 	if !ok {

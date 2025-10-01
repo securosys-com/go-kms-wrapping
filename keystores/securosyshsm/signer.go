@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/helpers"
 	kms "github.com/openbao/go-kms-wrapping/v2/kms"
 )
 
@@ -19,25 +20,17 @@ type Signer struct {
 	buffer       []byte
 }
 
-func (s Signer) Update(data []byte) error {
+func (s *Signer) Update(data []byte) error {
 	s.buffer = append(s.buffer, data...)
 	return nil
 }
 
-func (s Signer) Close(data []byte) (signature []byte, err error) {
+func (s *Signer) Close(data []byte) (signature []byte, err error) {
 	s.buffer = append(s.buffer, data...)
 	return s.Sign()
 }
-func (s Signer) Sign() ([]byte, error) {
-	signatureAlgorithm := ""
-	switch s.signerParams.Algorithm {
-	case kms.Sign_SHA256_RSA_PKCS1_PSS:
-		signatureAlgorithm = "SHA256_WITH_RSA_PSS"
-		break
-	case kms.Sign_SHA512_RSA_PKCS1_PSS:
-		signatureAlgorithm = "SHA512_WITH_RSA_PSS"
-		break
-	}
+func (s *Signer) Sign() ([]byte, error) {
+	signatureAlgorithm, _ := helpers.MapSignAlgorithm(s.signerParams.Algorithm)
 	result, _, err := s.key.client.AsyncSign(
 		s.key.GetName(),
 		s.key.password,
@@ -76,8 +69,8 @@ type SignerFactory struct {
 var _ kms.SignerFactory = (*SignerFactory)(nil)
 
 func (s SignerFactory) NewSigner(privateKey kms.Key, signerParams *kms.SignerParameters) (kms.Signer, error) {
-	if privateKey.GetType() != kms.PrivateRSAKey {
-		return nil, errors.New("invalid key type. Only RSA keys are supported")
+	if privateKey.GetType() != kms.PrivateRSAKey && privateKey.GetType() != kms.PrivateECKey {
+		return nil, errors.New("invalid key type. Only RSA and EC keys are supported")
 	}
 	sk, ok := privateKey.(*Key)
 	if !ok {
@@ -88,6 +81,7 @@ func (s SignerFactory) NewSigner(privateKey kms.Key, signerParams *kms.SignerPar
 		signerParams: signerParams,
 	}, nil
 }
+
 func NewSigner(privateKey kms.Key, signerParams *kms.SignerParameters) (kms.Signer, error) {
 	factory := &SignerFactory{}
 	return factory.NewSigner(privateKey, signerParams)
