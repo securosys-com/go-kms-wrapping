@@ -21,8 +21,6 @@ package helpers
 
 import (
 	"encoding/json"
-
-	"github.com/openbao/go-kms-wrapping/v2/kms"
 )
 
 // STRUCTS
@@ -44,7 +42,7 @@ type KeyAttributes struct {
 	Label              string
 	Attributes         map[string]bool
 	KeySize            float64
-	Policy             *kms.Policy
+	Policy             *Policy
 	DerivedAttributes  map[string]interface{}
 	PublicKey          string
 	Algorithm          string
@@ -173,36 +171,36 @@ type RandomResponse struct {
 	Random string `json:"random"`
 }
 
-//type Approval struct {
-//	TypeOfKey string  `json:"type"`
-//	Name      *string `json:"name"`
-//	Value     *string `json:"value"`
-//}
-//type Group struct {
-//	Name      string     `json:"name"`
-//	Quorum    int        `json:"quorum"`
-//	Approvals []Approval `json:"approvals"`
-//}
-//type Token struct {
-//	Name     string  `json:"name"`
-//	Timelock int     `json:"timelock"`
-//	Timeout  int     `json:"timeout"`
-//	Groups   []Group `json:"groups"`
-//}
-//type Rule struct {
-//	Tokens []Token `json:"tokens"`
-//}
-//type KeyStatus struct {
-//	Blocked bool `json:"blocked"`
-//}
+type Approval struct {
+	TypeOfKey string  `json:"type"`
+	Name      *string `json:"name"`
+	Value     *string `json:"value"`
+}
+type Group struct {
+	Name      string     `json:"name"`
+	Quorum    int        `json:"quorum"`
+	Approvals []Approval `json:"approvals"`
+}
+type Token struct {
+	Name     string  `json:"name"`
+	Timelock int     `json:"timelock"`
+	Timeout  int     `json:"timeout"`
+	Groups   []Group `json:"groups"`
+}
+type Rule struct {
+	Tokens []Token `json:"tokens"`
+}
+type KeyStatus struct {
+	Blocked bool `json:"blocked"`
+}
 
 // Policy structure for rules use, block, unblock, modify
-//type Policy struct {
-//	RuleUse     Rule       `json:"ruleUse"`
-//	RuleBlock   *Rule      `json:"ruleBlock,omitempty"`
-//	RuleUnBlock *Rule      `json:"ruleUnblock,omitempty"`
-//	RuleModify  *Rule      `json:"ruleModify,omitempty"`
-//	KeyStatus   *KeyStatus `json:"keyStatus,omitempty"`
-//}
+type Policy struct {
+	RuleUse     Rule       `json:"ruleUse"`
+	RuleBlock   *Rule      `json:"ruleBlock,omitempty"`
+	RuleUnBlock *Rule      `json:"ruleUnblock,omitempty"`
+	RuleModify  *Rule      `json:"ruleModify,omitempty"`
+	KeyStatus   *KeyStatus `json:"keyStatus,omitempty"`
+}
 
 //END STRUCTS

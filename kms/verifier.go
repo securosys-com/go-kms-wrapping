@@ -3,34 +3,82 @@
 
 package kms
 
+import (
+	"context"
+	"fmt"
+	"hash"
+)
+
 // SignerParameters defines the parameters required by a signing operation.
 type VerifierParameters struct {
 	Algorithm SignAlgorithm
-	// Signature to be verified
+
+	// Signature to be verified.
 	Signature []byte
+
+	// Provider-specific parameters.
+	ProviderParameters map[string]interface{}
 }
 
 // Verifier interface represents signature verification operations
 type Verifier interface {
 	// This function continues a multiple-part verification operation, processing another data part.
-	Update(data []byte) error
+	Update(ctx context.Context, data []byte) error
 
-	// This function finishes a single or multiple-part signature verification operation, possibly processing the last data part, and checking the validity of the signature.
-	Close(data []byte) error
-
-	// Alternative: the caller provides the signature to be verified at the end of the operation.
-	// This function finishes a single or multiple-part signature verification operation, possibly processing the last data part, and checking the validity of the signature.
-	CloseEx(data []byte, signature []byte) error
+	// The caller provides the signature to be verified at the end of the
+	// operation. This may be nil if signature was provided as part of the
+	// VerifierParameters.
+	//
+	// This function finishes a single or multiple-part signature verification
+	// operation, possibly processing the last data part, and checking the
+	// validity of the signature.
+	//
+	// The value of signature passed here, if not nil, will take precedence
+	// over the one provided in the constructing parameters.
+	Close(ctx context.Context, data []byte, signature []byte) error
 }
 
-// VerifierFactory creates Verifier instances
+// NewDigestVerifier will mutate its passed verifierParams.
+func NewDigestVerifier(ctx context.Context, factory VerifierFactory, verifierParams *VerifierParameters) (Verifier, error) {
+	hasher := verifierParams.Algorithm.Hash()
+	if hasher == nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnknownDigestAlgorithm, verifierParams.Algorithm.String())
+	}
+
+	return &verifier{factory: factory, params: verifierParams, hash: hasher}, nil
+}
+
+type verifier struct {
+	factory VerifierFactory
+	params  *VerifierParameters
+
+	hash hash.Hash
+}
+
+func (v *verifier) Update(ctx context.Context, data []byte) error {
+	_, err := v.hash.Write(data)
+	return err
+}
+
+func (v *verifier) Close(ctx context.Context, data []byte, signature []byte) error {
+	if err := v.Update(ctx, data); err != nil {
+		return err
+	}
+
+	if signature != nil {
+		v.params.Signature = signature
+	}
+
+	return v.factory.DigestVerify(ctx, v.params, v.hash.Sum(nil))
+}
+
+// VerifierFactory creates Verifier instances. VerifierFactory is optionally
+// implemented by (public or public/private pair) Key types.
 type VerifierFactory interface {
-	// NewVerifier creates a new Verifier instance for signature verification, using a public key.
-	NewVerifier(publicKey Key, verifierParams *VerifierParameters) (Verifier, error)
+	// DigestVerify performs a one-shot verification of a digital signature, from a provided digest.
+	DigestVerify(ctx context.Context, verifierParams *VerifierParameters, digest []byte) error
 
-	// NewMACVerifier creates a new Verifier instance for MAC verification
-	// NewMACVerifier(key Key, algorithm MAC_Algorithm) (Verifier, error)
-
-	// NewHMACVerifier creates a new Verifier instance for HMAC verification
-	// NewHMACVerifier(key Key, algorithm HMAC_Algorithm) (Verifier, error)
+	// NewVerifier performs a multi-step digital signature, using a private
+	// key, from a provided input message.
+	NewVerifier(ctx context.Context, verifierParams *VerifierParameters) (Verifier, error)
 }

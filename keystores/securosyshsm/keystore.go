@@ -3,118 +3,37 @@
 package securosyshsm
 
 import (
+	"context"
 	b64 "encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/client"
 	"github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/helpers"
 	kms "github.com/openbao/go-kms-wrapping/v2/kms"
 )
 
 // Ensure KeyStore implements KeyStore
-var _ kms.KeyStore = (*KeyStore)(nil)
+var (
+	_ kms.KeyStore    = (*keyStore)(nil)
+	_ kms.NewKeyStore = NewKeyStore
+)
 
 // KeyStore is a KeyStore backed by a Securosys HSM.
 // In real life, this would use the Securosys SDK / PKCS#11 library.
 var LOGGER = slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-type KeyStore struct {
-	provider *kms.CryptoProviderParameters
-	client   *client.SecurosysClient
-	closed   bool
+type keyStore struct {
+	params *map[string]any
+	client *client.SecurosysClient
+	closed bool
 }
 
-func (s *KeyStore) GenerateRandom(length int) (random []byte, err error) {
-	if length < 1 {
-		return nil, errors.New("length must be greater than zero")
-	}
-	generateRandom, _, err := s.client.GenerateRandom(length)
-	if err != nil {
-		return nil, err
-	}
-	random, _ = b64.StdEncoding.DecodeString(generateRandom.Random)
-	return random, nil
-
-}
-
-func (s *KeyStore) GenerateSecretKey(keyAttributes *kms.KeyAttributes, password ...string) (kms.Key, error) {
-	keyType := ""
-	switch keyAttributes.KeyType {
-	case kms.AESKey:
-		keyType = "AES"
-		break
-	}
-	attributes := attributesMapper(keyAttributes)
-	keyPassword := ""
-	if password != nil && len(password) > 0 {
-		keyPassword = password[0]
-	}
-
-	key, err := s.client.CreateOrUpdateKey(keyAttributes.Name, keyPassword, attributes, keyType, float64(keyAttributes.BitKeyLen), nil, "", false)
-	if err != nil {
-		return nil, err
-	}
-
-	getKey, err := s.client.GetKey(key, keyPassword)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Key{
-		client:   s.client,
-		password: keyPassword,
-		key:      getKey,
-	}, nil
-}
-
-func (s *KeyStore) GenerateKeyPair(keyPairAttributes *kms.KeyAttributes, password ...string) (privateKey kms.Key, publicKey kms.Key, err error) {
-	keyType := ""
-	var curveOid string
-	var keySize float64
-	switch keyPairAttributes.KeyType {
-	case kms.PrivateRSAKey:
-		keyType = "RSA"
-		curveOid = ""
-		keySize = float64(keyPairAttributes.BitKeyLen)
-		break
-	case kms.PrivateECKey:
-		keyType = "EC"
-		curveOid = keyPairAttributes.CurveOid
-		keySize = 0
-		break
-	}
-
-	attributes := attributesMapper(keyPairAttributes)
-	keyPassword := ""
-	if password != nil && len(password) > 0 {
-		keyPassword = password[0]
-	}
-
-	key, err := s.client.CreateOrUpdateKey(keyPairAttributes.Name, keyPassword, attributes, keyType, keySize, keyPairAttributes.Policy, curveOid, false)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	getKey, err := s.client.GetKey(key, keyPassword)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return &Key{
-			client:   s.client,
-			password: keyPassword,
-			key:      getKey,
-		}, &Key{
-			client:   s.client,
-			password: keyPassword,
-			key:      getKey,
-		}, nil
-}
-
-func (s *KeyStore) Close() error {
+func (s *keyStore) Close(ctx context.Context) error {
 	if s.closed {
 		return nil
 	}
@@ -123,95 +42,260 @@ func (s *KeyStore) Close() error {
 	return nil
 }
 
-func (s *KeyStore) Login(credentials *kms.Credentials) error {
+func (s *keyStore) Login(ctx context.Context, _ *kms.Credentials) error {
 	s.closed = false
 	return nil
 }
 
-func (s *KeyStore) ListKeys() ([]kms.Key, error) {
-	// TODO: query HSM for key handles
-	err := IsConnectionClosed(s.closed)
-	if err != nil {
+func (s *keyStore) ListKeys(ctx context.Context) ([]kms.Key, error) {
+	// 1️⃣ Check if connection is closed
+	if err := IsConnectionClosed(s.closed); err != nil {
 		return nil, err
 	}
+
+	// 2️⃣ Respect context cancellation before doing anything
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	// 3️⃣ Get keys from client (assuming GetKeys doesn’t accept ctx)
 	keys, err := s.client.GetKeys()
 	if err != nil {
 		return nil, err
 	}
-	var mappedKeys []kms.Key
-	for _, keyLabel := range keys {
-		key, err := s.client.GetKey(keyLabel, "")
-		if err == nil {
-			//TEMPORARY DISABLE OTHER KEYS
-			if key.Algorithm == "RSA" || key.Algorithm == "AES" || key.Algorithm == "EC" {
-				mappedKeys = append(mappedKeys, &Key{
-					client:   s.client,
-					password: "",
-					key:      key,
-				})
 
-			}
+	var mappedKeys []kms.Key
+
+	// 4️⃣ Iterate with cancellation checks
+	for _, keyLabel := range keys {
+		select {
+		case <-ctx.Done():
+			// Graceful exit if context is cancelled mid-loop
+			return mappedKeys, ctx.Err()
+		default:
 		}
 
+		getKey, err := s.client.GetKey(keyLabel, "")
+		if err != nil {
+			continue // skip key on error
+		}
+
+		if getKey.Algorithm == "ED" || getKey.Algorithm == "RSA" || getKey.Algorithm == "AES" || getKey.Algorithm == "EC" {
+			mappedKeys = append(mappedKeys, &key{
+				client:   s.client,
+				key:      getKey,
+				password: "",
+			})
+		}
 	}
+
 	return mappedKeys, nil
 }
+func (s *keyStore) GetKeyById(ctx context.Context, keyId string, password ...string) (kms.Key, error) {
+	// 1️⃣ Check if context is already cancelled
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
-func (s *KeyStore) GetKeyById(keyId string, password ...string) (kms.Key, error) {
+	// 2️⃣ Determine password
 	keyPassword := ""
-	if password != nil && len(password) > 0 {
+	if len(password) > 0 {
 		keyPassword = password[0]
 	}
-	key, err := s.client.GetKey(keyId, keyPassword)
+
+	// 3️⃣ Get key from client (if client supports context, pass it)
+	getKey, err := s.client.GetKey(keyId, keyPassword)
 	if err != nil {
 		return nil, err
 	}
-	return &Key{
+
+	return &key{
 		client:   s.client,
 		password: keyPassword,
-		key:      key,
+		key:      getKey,
 	}, nil
 }
 
-func (s *KeyStore) GetKeyByName(keyName string, password ...string) (kms.Key, error) {
+func (s *keyStore) GetKeyByName(ctx context.Context, keyName string, password ...string) (kms.Key, error) {
+	// 1️⃣ Check context cancellation
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	// 2️⃣ Determine password
 	keyPassword := ""
-	if password != nil && len(password) > 0 {
+	if len(password) > 0 {
 		keyPassword = password[0]
 	}
-	key, err := s.client.GetKey(keyName, keyPassword)
+
+	// 3️⃣ Get key from client
+	getKey, err := s.client.GetKey(keyName, keyPassword)
 	if err != nil {
 		return nil, err
 	}
-	return &Key{
+
+	return &key{
 		client:   s.client,
 		password: keyPassword,
-		key:      key,
+		key:      getKey,
 	}, nil
 }
 
-func (s *KeyStore) RemoveKey(key kms.Key) error {
-	err := s.client.RemoveKey(key.GetName())
-	if err != nil {
-		return err
+func (s *keyStore) GetKeyByAttrs(ctx context.Context, attrs map[string]interface{}) (kms.Key, error) {
+	return nil, fmt.Errorf("GetKeyByAttrs is not supported by SecurosysKMS")
+}
+
+func (s *keyStore) GetInfo() map[string]string {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *keyStore) GenerateRandom(ctx context.Context, length int) ([]byte, error) {
+	if length < 1 {
+		return nil, errors.New("length must be greater than zero")
 	}
-	return nil
+
+	// Check context before starting
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	generateRandom, _, err := s.client.GenerateRandom(length)
+	if err != nil {
+		return nil, err
+	}
+
+	random, _ := b64.StdEncoding.DecodeString(generateRandom.Random)
+	return random, nil
+}
+
+func (s *keyStore) GenerateSecretKey(ctx context.Context, keyAttributes *kms.KeyAttributes, password ...string) (kms.Key, error) {
+	// Check context
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	keyType := ""
+	switch keyAttributes.KeyType {
+	case kms.KeyType_AES:
+		keyType = "AES"
+	case kms.KeyType_Generic_Secret:
+		return nil, errors.New("Generic Secret Key is not yet supported")
+	default:
+		return nil, errors.New("Not supported key type")
+	}
+
+	attributes := attributesMapper(keyAttributes)
+
+	keyPassword := ""
+	if len(password) > 0 {
+		keyPassword = password[0]
+	}
+
+	keyName, err := s.client.CreateOrUpdateKey(keyAttributes.Name, keyPassword, attributes, keyType, float64(keyAttributes.BitKeyLen), nil, "", false)
+	if err != nil {
+		return nil, err
+	}
+
+	newKey, err := s.client.GetKey(keyName, keyPassword)
+	if err != nil {
+		return nil, err
+	}
+
+	return &key{
+		client:   s.client,
+		password: keyPassword,
+		key:      newKey,
+	}, nil
+}
+
+func (s *keyStore) GenerateKeyPair(ctx context.Context, keyPairAttributes *kms.KeyAttributes, password ...string) (privateKey kms.Key, publicKey kms.Key, err error) {
+	// Check context
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	default:
+	}
+
+	keyType := ""
+	var curveOid string
+	var keySize float64
+	switch keyPairAttributes.KeyType {
+	case kms.KeyType_RSA_Private:
+		keyType = "RSA"
+		curveOid = ""
+		keySize = float64(keyPairAttributes.BitKeyLen)
+	case kms.KeyType_EC_Private:
+		keyType = "EC"
+		curveOid = helpers.MapCurveToStringCurve(keyPairAttributes.Curve)
+		keySize = 0
+	case kms.KeyType_ED_Private:
+		keyType = "ED"
+		curveOid = "1.3.101.112"
+		keySize = 0
+	default:
+		return nil, nil, errors.New("unsupported key type")
+	}
+
+	attributes := attributesMapper(keyPairAttributes)
+
+	keyPassword := ""
+	if len(password) > 0 {
+		keyPassword = password[0]
+	}
+	policy, err := mapToPolicy(keyPairAttributes.ProviderSpecific)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyName, err := s.client.CreateOrUpdateKey(keyPairAttributes.Name, keyPassword, attributes, keyType, keySize, policy, curveOid, false)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	getKey, err := s.client.GetKey(keyName, keyPassword)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	k := &key{
+		client:   s.client,
+		password: keyPassword,
+		key:      getKey,
+	}
+
+	return k, k, nil
+}
+
+func (s *keyStore) RemoveKey(ctx context.Context, key kms.Key) error {
+	// Check context
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	return s.client.RemoveKey(key.GetName())
 }
 
 // KeyStoreFactory creates KeyStore instances
 type KeyStoreFactory struct{}
 
-// Ensure KeyStoreFactory implements KeyStoreFactory
-var _ kms.KeyStoreFactory = (*KeyStoreFactory)(nil)
-
-func (f *KeyStoreFactory) NewKeyStore(provider *kms.CryptoProviderParameters) (kms.KeyStore, error) {
-	if provider == nil {
-		return nil, errors.New("provider parameters required")
-	}
-	if provider.Params == nil {
-		return nil, errors.New("provider.Params parameters required")
+func NewKeyStore(params map[string]any) (kms.KeyStore, error) {
+	if params == nil {
+		return nil, errors.New("params parameters required")
 	}
 
-	bytes, _ := json.Marshal(provider.Params)
+	bytes, _ := json.Marshal(params)
 	var config *helpers.SecurosysConfig
 	json.Unmarshal(bytes, &config)
 
@@ -228,10 +312,10 @@ func (f *KeyStoreFactory) NewKeyStore(provider *kms.CryptoProviderParameters) (k
 		return nil, errors.New(connection)
 	}
 	//LOGGER.Info(connection)
-	return &KeyStore{
-		provider: provider,
-		client:   c,
-		closed:   false,
+	return &keyStore{
+		params: params,
+		client: c,
+		closed: false,
 	}, nil
 }
 
@@ -250,13 +334,17 @@ func attributesMapper(keyAttributes *kms.KeyAttributes) map[string]bool {
 	return attributes
 }
 
+func mapToPolicy(m map[string]interface{}) (*helpers.Policy, error) {
+	var policy helpers.Policy
+	if err := mapstructure.Decode(m, &policy); err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
 func IsConnectionClosed(closed bool) error {
 	if closed {
 		return errors.New("keystore already closed")
 	}
 	return nil
-}
-func NewKeyStore(provider *kms.CryptoProviderParameters) (kms.KeyStore, error) {
-	factory := &KeyStoreFactory{}
-	return factory.NewKeyStore(provider)
 }

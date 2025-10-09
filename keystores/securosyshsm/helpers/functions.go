@@ -81,7 +81,7 @@ func StringToCharArray(text string) []string {
 }
 
 // Function that helps fill a policy structure
-func PreparePolicy(policyString string, simplified bool) (*kms.Policy, error) {
+func PreparePolicy(policyString string, simplified bool) (*Policy, error) {
 	return PrepareFullPolicy(policyString, simplified, true)
 }
 
@@ -108,8 +108,8 @@ func WrapPublicKeyWithHeaders(publicKey string) []byte {
 }
 
 // This function preparing Policy structure for generating asynchronous keys
-func PrepareFullPolicy(policyString string, simplified bool, addKeyStatus bool) (*kms.Policy, error) {
-	var PolicyObj kms.Policy
+func PrepareFullPolicy(policyString string, simplified bool, addKeyStatus bool) (*Policy, error) {
+	var PolicyObj Policy
 	if simplified == true {
 
 		var simplePolicy map[string]string
@@ -117,14 +117,14 @@ func PrepareFullPolicy(policyString string, simplified bool, addKeyStatus bool) 
 		if err == nil {
 			token := PreparePolicyTokens(simplePolicy)
 			PolicyObj.RuleUse.Tokens = append(PolicyObj.RuleUse.Tokens, token)
-			PolicyObj.RuleBlock = new(kms.Rule)
+			PolicyObj.RuleBlock = new(Rule)
 			PolicyObj.RuleBlock.Tokens = append(PolicyObj.RuleBlock.Tokens, token)
-			PolicyObj.RuleUnBlock = new(kms.Rule)
+			PolicyObj.RuleUnBlock = new(Rule)
 			PolicyObj.RuleUnBlock.Tokens = append(PolicyObj.RuleUnBlock.Tokens, token)
-			PolicyObj.RuleModify = new(kms.Rule)
+			PolicyObj.RuleModify = new(Rule)
 			PolicyObj.RuleModify.Tokens = append(PolicyObj.RuleModify.Tokens, token)
 			if addKeyStatus == true {
-				PolicyObj.KeyStatus = new(kms.KeyStatus)
+				PolicyObj.KeyStatus = new(KeyStatus)
 				PolicyObj.KeyStatus.Blocked = false
 			}
 		} else {
@@ -163,7 +163,7 @@ func PrepareFullPolicy(policyString string, simplified bool, addKeyStatus bool) 
 			}
 
 			if addKeyStatus == true {
-				PolicyObj.KeyStatus = new(kms.KeyStatus)
+				PolicyObj.KeyStatus = new(KeyStatus)
 				PolicyObj.KeyStatus.Blocked = false
 			}
 
@@ -183,12 +183,12 @@ func PrepareFullPolicy(policyString string, simplified bool, addKeyStatus bool) 
 
 // This function groups from simplePolicy parameter sended with keys
 
-func PreparePolicyTokens(policy map[string]string) kms.Token {
-	var group kms.Group
+func PreparePolicyTokens(policy map[string]string) Token {
+	var group Group
 	group.Name = "main"
 	group.Quorum = len(policy)
 	for name, element := range policy {
-		var approval kms.Approval
+		var approval Approval
 		clonedName := name
 		clonedElement := element
 		_, err := ReadCertificate(element)
@@ -210,7 +210,7 @@ func PreparePolicyTokens(policy map[string]string) kms.Token {
 		group.Approvals = append(group.Approvals, approval)
 	}
 
-	var token kms.Token
+	var token Token
 	token.Name = "main"
 	token.Timeout = 0
 	token.Timelock = 0
@@ -350,43 +350,83 @@ func BytesToPublicKey(pub []byte) any {
 	}
 	return ifc
 }
+func MapStringCurverToCurve(curveString string) kms.Curve {
+	switch curveString {
+	case "1.2.840.10045.3.1.7":
+		return kms.Curve_P256
+	case "1.3.132.0.34":
+		return kms.Curve_P384
+	case "1.3.132.0.35":
+		return kms.Curve_P521
+
+	}
+	return kms.Curve_None
+}
+
+func MapCurveToStringCurve(curve kms.Curve) string {
+	switch curve {
+	case kms.Curve_P256:
+		return "1.2.840.10045.3.1.7"
+	case kms.Curve_P384:
+		return "1.3.132.0.34"
+	case kms.Curve_P521:
+		return "1.3.132.0.35"
+
+	}
+	return ""
+}
 func MapSignAlgorithm(alg kms.SignAlgorithm) (string, error) {
 	switch alg {
-	case kms.Sign_SHA224_RSA_PKCS1_PSS:
-		return "SHA224_WITH_RSA_PSS", nil
-	case kms.Sign_SHA256_RSA_PKCS1_PSS:
+	case kms.SignAlgo_RSA_PKCS1_PSS_SHA_256:
 		return "SHA256_WITH_RSA_PSS", nil
-	case kms.Sign_SHA384_RSA_PKCS1_PSS:
+	case kms.SignAlgo_RSA_PKCS1_PSS_SHA_384:
 		return "SHA384_WITH_RSA_PSS", nil
-	case kms.Sign_SHA512_RSA_PKCS1_PSS:
+	case kms.SignAlgo_RSA_PKCS1_PSS_SHA_512:
 		return "SHA512_WITH_RSA_PSS", nil
-	case kms.Sign_SHA224_RSA:
-		return "SHA224_WITH_RSA", nil
-	case kms.Sign_SHA256_RSA:
-		return "SHA256_WITH_RSA", nil
-	case kms.Sign_SHA384_RSA:
-		return "SHA384_WITH_RSA", nil
-	case kms.Sign_SHA512_RSA:
-		return "SHA512_WITH_RSA", nil
-
-	case kms.Sign_SHA1_ECDSA:
-		return "SHA1_WITH_ECDSA", nil
-	case kms.Sign_SHA224_ECDSA:
-		return "SHA224_WITH_ECDSA", nil
-	case kms.Sign_SHA256_ECDSA:
+	case kms.SignAlgo_EC_P256:
 		return "SHA256_WITH_ECDSA", nil
-	case kms.Sign_SHA384_ECDSA:
+	case kms.SignAlgo_EC_P384:
 		return "SHA384_WITH_ECDSA", nil
-	case kms.Sign_SHA512_ECDSA:
+	case kms.SignAlgo_EC_P521:
 		return "SHA512_WITH_ECDSA", nil
-	case kms.Sign_SHA3224_ECDSA:
-		return "SHA3224_WITH_ECDSA", nil
-	case kms.Sign_SHA3256_ECDSA:
-		return "SHA3256_WITH_ECDSA", nil
-	case kms.Sign_SHA3384_ECDSA:
-		return "SHA3384_WITH_ECDSA", nil
-	case kms.Sign_SHA3512_ECDSA:
-		return "SHA3512_WITH_ECDSA", nil
+	case kms.SignAlgo_ED:
+		return "EDDSA", nil
+
+		//case kms.Sign_SHA224_RSA_PKCS1_PSS:
+		//	return "SHA224_WITH_RSA_PSS", nil
+		//case kms.Sign_SHA256_RSA_PKCS1_PSS:
+		//	return "SHA256_WITH_RSA_PSS", nil
+		//case kms.Sign_SHA384_RSA_PKCS1_PSS:
+		//	return "SHA384_WITH_RSA_PSS", nil
+		//case kms.Sign_SHA512_RSA_PKCS1_PSS:
+		//	return "SHA512_WITH_RSA_PSS", nil
+		//case kms.Sign_SHA224_RSA:
+		//	return "SHA224_WITH_RSA", nil
+		//case kms.Sign_SHA256_RSA:
+		//	return "SHA256_WITH_RSA", nil
+		//case kms.Sign_SHA384_RSA:
+		//	return "SHA384_WITH_RSA", nil
+		//case kms.Sign_SHA512_RSA:
+		//	return "SHA512_WITH_RSA", nil
+		//
+		//case kms.Sign_SHA1_ECDSA:
+		//	return "SHA1_WITH_ECDSA", nil
+		//case kms.Sign_SHA224_ECDSA:
+		//	return "SHA224_WITH_ECDSA", nil
+		//case kms.Sign_SHA256_ECDSA:
+		//	return "SHA256_WITH_ECDSA", nil
+		//case kms.Sign_SHA384_ECDSA:
+		//	return "SHA384_WITH_ECDSA", nil
+		//case kms.Sign_SHA512_ECDSA:
+		//	return "SHA512_WITH_ECDSA", nil
+		//case kms.Sign_SHA3224_ECDSA:
+		//	return "SHA3224_WITH_ECDSA", nil
+		//case kms.Sign_SHA3256_ECDSA:
+		//	return "SHA3256_WITH_ECDSA", nil
+		//case kms.Sign_SHA3384_ECDSA:
+		//	return "SHA3384_WITH_ECDSA", nil
+		//case kms.Sign_SHA3512_ECDSA:
+		//	return "SHA3512_WITH_ECDSA", nil
 
 	}
 	return "", errors.New("unknown cipher algorithm")
@@ -394,27 +434,27 @@ func MapSignAlgorithm(alg kms.SignAlgorithm) (string, error) {
 }
 func MapCipherAlgorithm(alg kms.CipherAlgorithmMode) (string, error) {
 	switch alg {
-	case kms.Cipher_AES_GCM:
+	case kms.CipherMode_AES_GCM:
 		return "AES_GCM", nil
-	case kms.Cipher_AES_CBC:
-		return "AES_CBC_NO_PADDING", nil
-	case kms.Cipher_AES_ECB:
-		return "AES_ECB", nil
-	case kms.Cipher_AES_CTR:
-		return "AES_CTR", nil
-	case kms.Cipher_RSA_MODE:
-		return "RSA", nil
-	case kms.Cipher_RSA_PADDING_OAEP:
-		return "RSA_PADDING_OAEP", nil
-	case kms.Cipher_RSA_PADDING_OAEP_SHA1:
-		return "RSA_PADDING_OAEP_WITH_SHA1", nil
-	case kms.Cipher_RSA_PADDING_OAEP_SHA224:
-		return "RSA_PADDING_OAEP_WITH_SHA224", nil
-	case kms.Cipher_RSA_PADDING_OAEP_SHA256:
+	//case kms.Cipher_AES_CBC:
+	//	return "AES_CBC_NO_PADDING", nil
+	//case kms.Cipher_AES_ECB:
+	//	return "AES_ECB", nil
+	//case kms.Cipher_AES_CTR:
+	//	return "AES_CTR", nil
+	//case kms.Cipher_RSA_MODE:
+	//	return "RSA", nil
+	//case kms.Cipher_RSA_PADDING_OAEP:
+	//	return "RSA_PADDING_OAEP", nil
+	//case kms.Cipher_RSA_PADDING_OAEP_SHA1:
+	//	return "RSA_PADDING_OAEP_WITH_SHA1", nil
+	//case kms.Cipher_RSA_PADDING_OAEP_SHA224:
+	//	return "RSA_PADDING_OAEP_WITH_SHA224", nil
+	case kms.CipherMode_RSA_OAEP_SHA256:
 		return "RSA_PADDING_OAEP_WITH_SHA256", nil
-	case kms.Cipher_RSA_PADDING_OAEP_SHA384:
+	case kms.CipherMode_RSA_OAEP_SHA384:
 		return "RSA_PADDING_OAEP_WITH_SHA384", nil
-	case kms.Cipher_RSA_PADDING_OAEP_SHA512:
+	case kms.CipherMode_RSA_OAEP_SHA512:
 		return "RSA_PADDING_OAEP_WITH_SHA512", nil
 
 	}

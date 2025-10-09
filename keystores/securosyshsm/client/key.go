@@ -26,7 +26,6 @@ import (
 	"net/http"
 
 	helpers "github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/helpers"
-	"github.com/openbao/go-kms-wrapping/v2/kms"
 )
 
 // Function thats sends update key password request to TSB
@@ -60,8 +59,8 @@ func (c *TSBClient) UpdateKeyPassword(label string, password string, newPassword
 
 }
 
-// Function thats sends create key request to TSB
-func (c *TSBClient) CreateOrUpdateKey(label string, password string, attributes map[string]bool, keytype string, keySize float64, policy *kms.Policy, curveOid string, modify bool) (string, error) {
+// CreateOrUpdateKey Function thats sends create key request to TSB
+func (c *TSBClient) CreateOrUpdateKey(label string, password string, attributes map[string]bool, keytype string, keySize float64, policy *helpers.Policy, curveOid string, modify bool) (string, error) {
 
 	charsPasswordJson, _ := json.Marshal(helpers.StringToCharArray(password))
 	policyJson, _ := json.Marshal(&policy)
@@ -122,7 +121,7 @@ func (c *TSBClient) RemoveKey(keyLabel string) error {
 }
 
 // Function thats sends import key request to TSB
-func (c *TSBClient) ImportKey(label string, privateKey string, publicKey string, secretKey string, certificate string, attributes map[string]bool, keytype string, policy kms.Policy) (map[string]interface{}, error) {
+func (c *TSBClient) ImportKey(label string, privateKey string, publicKey string, secretKey string, certificate string, attributes map[string]bool, keytype string, policy helpers.Policy) (map[string]interface{}, error) {
 	policyJson, _ := json.Marshal(policy)
 	policyString := string(`,"policy":` + string(policyJson))
 	if attributes["extractable"] {

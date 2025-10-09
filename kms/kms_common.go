@@ -4,49 +4,27 @@
 package kms
 
 // Credentials provides login credentials for a keystore provider
-// TODO
 type Credentials struct {
 	Username string
 	Password string
 }
 
-type Approval struct {
-	TypeOfKey string  `json:"type"`
-	Name      *string `json:"name"`
-	Value     *string `json:"value"`
-}
-type Group struct {
-	Name      string     `json:"name"`
-	Quorum    int        `json:"quorum"`
-	Approvals []Approval `json:"approvals"`
-}
-type Token struct {
-	Name     string  `json:"name"`
-	Timelock int     `json:"timelock"`
-	Timeout  int     `json:"timeout"`
-	Groups   []Group `json:"groups"`
-}
-type Rule struct {
-	Tokens []Token `json:"tokens"`
-}
-type KeyStatus struct {
-	Blocked bool `json:"blocked"`
-}
+// NewKeyStore should be implemented by all providers to allow creating a key
+// store from the given configuration parameters. Parameters are provider
+// specific except for standard ones defined here; these should be prefixed
+// with a provider identifier to prevent overlap.
+type NewKeyStore func(params map[string]interface{}) (KeyStore, error)
 
-// Policy structure for rules use, block, unblock, modify
-type Policy struct {
-	RuleUse     Rule       `json:"ruleUse"`
-	RuleBlock   *Rule      `json:"ruleBlock,omitempty"`
-	RuleUnBlock *Rule      `json:"ruleUnblock,omitempty"`
-	RuleModify  *Rule      `json:"ruleModify,omitempty"`
-	KeyStatus   *KeyStatus `json:"keyStatus,omitempty"`
-}
+const (
+	// WithLoggerKeyStoreParam allows specifying a go-hclog.Logger instance
+	// for use by this provider.
+	WithLoggerKeyStoreParam string = "with-go-hclog-logger"
 
-// Specific initialization parameters for the current crypto provider.
-type CryptoProviderParameters struct {
-	KeystoreProvider string
-	Credentials      *Credentials
-	// SECUROSYS PROPORSAL
-	Params map[string]interface{}
-	// TODO: define opaque parameters specific to each crypto provider (or derive specific structure from this).
-}
+	// WithEnvironmentKeyStoreParam should be set to bool(true) if the
+	// provider is allowed to fall back to relevant environment variables
+	// or other global configuration for missing (required) options.
+	//
+	// Explicitly specified configuration options take precedence over
+	// discovered ones.
+	WithEnvironmentKeyStoreParam string = "with-env-vars"
+)
