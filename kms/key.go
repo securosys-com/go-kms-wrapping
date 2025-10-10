@@ -228,3 +228,6 @@ type AsymmetricKey interface {
 	// be returned instead of a custom type.
 	ExportComponentPublic(ctx context.Context) (interface{}, error)
 }
+type contextKey string
+
+const CONTEXT_KEY_NAME contextKey = "key"

@@ -375,23 +375,42 @@ func MapCurveToStringCurve(curve kms.Curve) string {
 	}
 	return ""
 }
-func MapSignAlgorithm(alg kms.SignAlgorithm) (string, error) {
-	switch alg {
-	case kms.SignAlgo_RSA_PKCS1_PSS_SHA_256:
-		return "SHA256_WITH_RSA_PSS", nil
-	case kms.SignAlgo_RSA_PKCS1_PSS_SHA_384:
-		return "SHA384_WITH_RSA_PSS", nil
-	case kms.SignAlgo_RSA_PKCS1_PSS_SHA_512:
-		return "SHA512_WITH_RSA_PSS", nil
-	case kms.SignAlgo_EC_P256:
-		return "SHA256_WITH_ECDSA", nil
-	case kms.SignAlgo_EC_P384:
-		return "SHA384_WITH_ECDSA", nil
-	case kms.SignAlgo_EC_P521:
-		return "SHA512_WITH_ECDSA", nil
-	case kms.SignAlgo_ED:
-		return "EDDSA", nil
+func MapSignAlgorithm(alg kms.SignAlgorithm, digest bool) (string, error) {
+	if digest {
+		switch alg {
+		case kms.SignAlgo_RSA_PKCS1_PSS_SHA_256:
+			return "NONE_WITH_RSA", nil
+		case kms.SignAlgo_RSA_PKCS1_PSS_SHA_384:
+			return "NONE_WITH_RSA", nil
+		case kms.SignAlgo_RSA_PKCS1_PSS_SHA_512:
+			return "NONE_WITH_RSA", nil
+		case kms.SignAlgo_EC_P256:
+			return "NONE_WITH_ECDSA", nil
+		case kms.SignAlgo_EC_P384:
+			return "NONE_WITH_ECDSA", nil
+		case kms.SignAlgo_EC_P521:
+			return "NONE_WITH_ECDSA", nil
+		case kms.SignAlgo_ED:
+			return "EDDSA", nil
+		}
 
+	} else {
+		switch alg {
+		case kms.SignAlgo_RSA_PKCS1_PSS_SHA_256:
+			return "SHA256_WITH_RSA", nil
+		case kms.SignAlgo_RSA_PKCS1_PSS_SHA_384:
+			return "SHA384_WITH_RSA", nil
+		case kms.SignAlgo_RSA_PKCS1_PSS_SHA_512:
+			return "SHA512_WITH_RSA", nil
+		case kms.SignAlgo_EC_P256:
+			return "SHA256_WITH_ECDSA", nil
+		case kms.SignAlgo_EC_P384:
+			return "SHA384_WITH_ECDSA", nil
+		case kms.SignAlgo_EC_P521:
+			return "SHA512_WITH_ECDSA", nil
+		case kms.SignAlgo_ED:
+			return "EDDSA", nil
+		}
 		//case kms.Sign_SHA224_RSA_PKCS1_PSS:
 		//	return "SHA224_WITH_RSA_PSS", nil
 		//case kms.Sign_SHA256_RSA_PKCS1_PSS:

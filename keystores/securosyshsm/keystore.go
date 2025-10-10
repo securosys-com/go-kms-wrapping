@@ -14,7 +14,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/client"
 	"github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/helpers"
-	kms "github.com/openbao/go-kms-wrapping/v2/kms"
+	"github.com/openbao/go-kms-wrapping/v2/kms"
 )
 
 // Ensure KeyStore implements KeyStore
@@ -83,17 +83,32 @@ func (s *keyStore) ListKeys(ctx context.Context) ([]kms.Key, error) {
 		}
 
 		if getKey.Algorithm == "ED" || getKey.Algorithm == "RSA" || getKey.Algorithm == "AES" || getKey.Algorithm == "EC" {
-			mappedKeys = append(mappedKeys, &key{
-				client:   s.client,
-				key:      getKey,
-				password: "",
-			})
+			if getKey.PublicKey == "" {
+				mappedKeys = append(mappedKeys, &SecretKey{
+					key: key{
+						client:   s.client,
+						password: "",
+						key:      getKey,
+					},
+				})
+
+			} else {
+				mappedKeys = append(mappedKeys, &PrivateKey{
+					key: key{
+						client:   s.client,
+						password: "",
+						key:      getKey,
+					},
+					publicKeyString: getKey.PublicKey,
+				})
+
+			}
 		}
 	}
 
 	return mappedKeys, nil
 }
-func (s *keyStore) GetKeyById(ctx context.Context, keyId string, password ...string) (kms.Key, error) {
+func (s *keyStore) GetKeyById(ctx context.Context, keyId string) (kms.Key, error) {
 	// 1️⃣ Check if context is already cancelled
 	select {
 	case <-ctx.Done():
@@ -103,9 +118,9 @@ func (s *keyStore) GetKeyById(ctx context.Context, keyId string, password ...str
 
 	// 2️⃣ Determine password
 	keyPassword := ""
-	if len(password) > 0 {
-		keyPassword = password[0]
-	}
+	//if len(password) > 0 {
+	//	keyPassword = password[0]
+	//}
 
 	// 3️⃣ Get key from client (if client supports context, pass it)
 	getKey, err := s.client.GetKey(keyId, keyPassword)
@@ -113,14 +128,29 @@ func (s *keyStore) GetKeyById(ctx context.Context, keyId string, password ...str
 		return nil, err
 	}
 
-	return &key{
-		client:   s.client,
-		password: keyPassword,
-		key:      getKey,
-	}, nil
+	if getKey.PublicKey == "" {
+		return &SecretKey{
+			key: key{
+				client:   s.client,
+				password: keyPassword,
+				key:      getKey,
+			},
+		}, nil
+
+	} else {
+		return &PrivateKey{
+			key: key{
+				client:   s.client,
+				password: keyPassword,
+				key:      getKey,
+			},
+			publicKeyString: getKey.PublicKey,
+		}, nil
+
+	}
 }
 
-func (s *keyStore) GetKeyByName(ctx context.Context, keyName string, password ...string) (kms.Key, error) {
+func (s *keyStore) GetKeyByName(ctx context.Context, keyName string) (kms.Key, error) {
 	// 1️⃣ Check context cancellation
 	select {
 	case <-ctx.Done():
@@ -130,21 +160,35 @@ func (s *keyStore) GetKeyByName(ctx context.Context, keyName string, password ..
 
 	// 2️⃣ Determine password
 	keyPassword := ""
-	if len(password) > 0 {
-		keyPassword = password[0]
-	}
+	//if len(password) > 0 {
+	//	keyPassword = password[0]
+	//}
 
 	// 3️⃣ Get key from client
 	getKey, err := s.client.GetKey(keyName, keyPassword)
 	if err != nil {
 		return nil, err
 	}
+	if getKey.PublicKey == "" {
+		return &SecretKey{
+			key: key{
+				client:   s.client,
+				password: keyPassword,
+				key:      getKey,
+			},
+		}, nil
 
-	return &key{
-		client:   s.client,
-		password: keyPassword,
-		key:      getKey,
-	}, nil
+	} else {
+		return &PrivateKey{
+			key: key{
+				client:   s.client,
+				password: keyPassword,
+				key:      getKey,
+			},
+			publicKeyString: getKey.PublicKey,
+		}, nil
+
+	}
 }
 
 func (s *keyStore) GetKeyByAttrs(ctx context.Context, attrs map[string]interface{}) (kms.Key, error) {
@@ -177,7 +221,7 @@ func (s *keyStore) GenerateRandom(ctx context.Context, length int) ([]byte, erro
 	return random, nil
 }
 
-func (s *keyStore) GenerateSecretKey(ctx context.Context, keyAttributes *kms.KeyAttributes, password ...string) (kms.Key, error) {
+func (s *keyStore) GenerateSecretKey(ctx context.Context, keyAttributes *kms.KeyAttributes) (kms.Key, error) {
 	// Check context
 	select {
 	case <-ctx.Done():
@@ -198,9 +242,9 @@ func (s *keyStore) GenerateSecretKey(ctx context.Context, keyAttributes *kms.Key
 	attributes := attributesMapper(keyAttributes)
 
 	keyPassword := ""
-	if len(password) > 0 {
-		keyPassword = password[0]
-	}
+	//if len(password) > 0 {
+	//	keyPassword = password[0]
+	//}
 
 	keyName, err := s.client.CreateOrUpdateKey(keyAttributes.Name, keyPassword, attributes, keyType, float64(keyAttributes.BitKeyLen), nil, "", false)
 	if err != nil {
@@ -211,15 +255,18 @@ func (s *keyStore) GenerateSecretKey(ctx context.Context, keyAttributes *kms.Key
 	if err != nil {
 		return nil, err
 	}
-
-	return &key{
+	k := &key{
 		client:   s.client,
 		password: keyPassword,
 		key:      newKey,
-	}, nil
+	}
+	secret := &SecretKey{
+		*k,
+	}
+	return secret, nil
 }
 
-func (s *keyStore) GenerateKeyPair(ctx context.Context, keyPairAttributes *kms.KeyAttributes, password ...string) (privateKey kms.Key, publicKey kms.Key, err error) {
+func (s *keyStore) GenerateKeyPair(ctx context.Context, keyPairAttributes *kms.KeyAttributes) (privKey kms.Key, pubKey kms.Key, err error) {
 	// Check context
 	select {
 	case <-ctx.Done():
@@ -250,10 +297,11 @@ func (s *keyStore) GenerateKeyPair(ctx context.Context, keyPairAttributes *kms.K
 	attributes := attributesMapper(keyPairAttributes)
 
 	keyPassword := ""
-	if len(password) > 0 {
-		keyPassword = password[0]
-	}
-	policy, err := mapToPolicy(keyPairAttributes.ProviderSpecific)
+	//if len(password) > 0 {
+	//	keyPassword = password[0]
+	//}
+
+	policy, err := MapToPolicy(keyPairAttributes.ProviderSpecific)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -272,8 +320,15 @@ func (s *keyStore) GenerateKeyPair(ctx context.Context, keyPairAttributes *kms.K
 		password: keyPassword,
 		key:      getKey,
 	}
-
-	return k, k, nil
+	var priv = &PrivateKey{
+		*k,
+		k.key.PublicKey,
+	}
+	var pub = &PublicKey{
+		*k,
+		k.key.PublicKey,
+	}
+	return priv, pub, nil
 }
 
 func (s *keyStore) RemoveKey(ctx context.Context, key kms.Key) error {
@@ -313,7 +368,6 @@ func NewKeyStore(params map[string]any) (kms.KeyStore, error) {
 	}
 	//LOGGER.Info(connection)
 	return &keyStore{
-		params: params,
 		client: c,
 		closed: false,
 	}, nil
@@ -333,9 +387,30 @@ func attributesMapper(keyAttributes *kms.KeyAttributes) map[string]bool {
 	attributes["destroyable"] = keyAttributes.IsRemovable
 	return attributes
 }
+func PolicyToMap(policy *helpers.Policy) (map[string]interface{}, error) {
+	if policy == nil {
+		return nil, nil
+	}
 
-func mapToPolicy(m map[string]interface{}) (*helpers.Policy, error) {
+	// Marshal struct to JSON
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return nil, err
+	}
+
+	// Unmarshal JSON into map
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+
+	return m, nil
+}
+func MapToPolicy(m map[string]interface{}) (*helpers.Policy, error) {
 	var policy helpers.Policy
+	if m == nil {
+		return nil, nil
+	}
 	if err := mapstructure.Decode(m, &policy); err != nil {
 		return nil, err
 	}

@@ -42,6 +42,7 @@ type SecurosysHSMClient struct {
 }
 
 func newSecurosysHSMClient(logger hclog.Logger, opts *options) (*SecurosysHSMClient, *wrapping.WrapperConfig, error) {
+	ctx := context.Background()
 	var keyLabel, keyPassword, certPath, keyPath, approvalTimeout, auth, bearerToken, checkEvery, tsbApiEndpoint string
 	var wrapperConfig *Configurations = new(Configurations)
 
@@ -209,16 +210,13 @@ func newSecurosysHSMClient(logger hclog.Logger, opts *options) (*SecurosysHSMCli
 	if !valid {
 		os.Exit(1)
 	}
-	provider := &kms.CryptoProviderParameters{
-		KeystoreProvider: "securosys-hsm",
-		Params: map[string]interface{}{
-			"restapi":     wrapperConfig.Settings.RestApi,
-			"auth":        wrapperConfig.Settings.Auth,
-			"bearertoken": wrapperConfig.Settings.BearerToken,
-			"certpath":    wrapperConfig.Settings.CertPath,
-			"keypath":     wrapperConfig.Settings.KeyPath,
-			"apikeys":     wrapperConfig.Settings.ApiKeys,
-		},
+	provider := map[string]interface{}{
+		"restapi":     wrapperConfig.Settings.RestApi,
+		"auth":        wrapperConfig.Settings.Auth,
+		"bearertoken": wrapperConfig.Settings.BearerToken,
+		"certpath":    wrapperConfig.Settings.CertPath,
+		"keypath":     wrapperConfig.Settings.KeyPath,
+		"apikeys":     wrapperConfig.Settings.ApiKeys,
 	}
 
 	keystore, err := securosyshsm.NewKeyStore(provider)
@@ -238,23 +236,27 @@ func newSecurosysHSMClient(logger hclog.Logger, opts *options) (*SecurosysHSMCli
 	wrapConfig.Metadata["approval_timeout"] = approvalTimeout
 	// wrapConfig.Metadata["key_password"] = keyPassword
 
-	key, _ := client.keystore.GetKeyByName(keyLabel)
+	key, _ := client.keystore.GetKeyByName(ctx, keyLabel)
 	if key == nil {
-		newKey, _, err := keystore.GenerateKeyPair(&kms.KeyAttributes{
-			Policy:      wrapperConfig.Policy,
-			KeyType:     kms.PrivateRSAKey,
-			Name:        keyLabel,
-			BitKeyLen:   2048,
-			IsRemovable: true,
-			IsSensitive: true,
-			CanEncrypt:  true,
-			CanDecrypt:  true,
-			CanSign:     true,
-			CanVerify:   true,
-			CanWrap:     true,
-			CanUnwrap:   true,
-			IsTrusted:   true,
-		}, keyPassword)
+		toMap, err := securosyshsm.PolicyToMap(wrapperConfig.Policy)
+		if err != nil {
+			return nil, nil, err
+		}
+		newKey, _, err := keystore.GenerateKeyPair(ctx, &kms.KeyAttributes{
+			ProviderSpecific: toMap,
+			KeyType:          kms.KeyType_RSA_Private,
+			Name:             keyLabel,
+			BitKeyLen:        2048,
+			IsRemovable:      true,
+			IsSensitive:      true,
+			CanEncrypt:       true,
+			CanDecrypt:       true,
+			CanSign:          true,
+			CanVerify:        true,
+			CanWrap:          true,
+			CanUnwrap:        true,
+			IsTrusted:        true,
+		})
 		if newKey == nil {
 			return client, wrapConfig, fmt.Errorf("Error on creating RSA Key: %s", err)
 		}
@@ -268,13 +270,14 @@ func newSecurosysHSMClient(logger hclog.Logger, opts *options) (*SecurosysHSMCli
 }
 
 func (c *SecurosysHSMClient) Encrypt(plaintext string) ([]byte, error) {
-	cipher, err := securosyshsm.NewCipher(kms.Encrypt, c.key, &kms.CipherParameters{
-		Algorithm: kms.Cipher_RSA_PADDING_OAEP_SHA256,
+	ctx := context.Background()
+	cipher, err := securosyshsm.CipherFactory{}.NewCipher(ctx, kms.CipherOp_Encrypt, &kms.CipherParameters{
+		Algorithm: kms.CipherMode_RSA_OAEP_SHA256,
 	})
 	if err != nil {
 		return nil, err
 	}
-	encrypted, _, _, err := cipher.Close([]byte(plaintext))
+	encrypted, err := cipher.Close(ctx, []byte(plaintext))
 	if err != nil {
 		return nil, err
 	}
@@ -283,12 +286,13 @@ func (c *SecurosysHSMClient) Encrypt(plaintext string) ([]byte, error) {
 }
 
 func (c *SecurosysHSMClient) Decrypt(encryptedPayload string, keyVersion string, initializationVector string) ([]byte, error) {
-	cipher, err := securosyshsm.NewCipher(kms.Decrypt, c.key, &kms.CipherParameters{
-		Algorithm: kms.Cipher_RSA_PADDING_OAEP_SHA256,
+	ctx := context.Background()
+	cipher, err := securosyshsm.CipherFactory{}.NewCipher(ctx, kms.CipherOp_Decrypt, &kms.CipherParameters{
+		Algorithm: kms.CipherMode_RSA_OAEP_SHA256,
 	})
 	encryptedBytes, err := base64.StdEncoding.DecodeString(encryptedPayload)
 	if cc, ok := cipher.(*securosyshsm.Cipher); ok {
-		_, err2 := cc.Update(encryptedBytes)
+		_, err2 := cc.Update(ctx, encryptedBytes)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -363,8 +367,12 @@ func (c *SecurosysHSMClient) Decrypt(encryptedPayload string, keyVersion string,
 	return nil, err
 }
 func (c *SecurosysHSMClient) getApproverName(publicKey string) string {
-	if len(c.key.GetPolicy().RuleUse.Tokens) > 0 {
-		for _, token := range c.key.GetPolicy().RuleUse.Tokens {
+	policy, err := securosyshsm.MapToPolicy(c.key.GetKeyAttributes().ProviderSpecific)
+	if err != nil {
+		return ""
+	}
+	if len(policy.RuleUse.Tokens) > 0 {
+		for _, token := range policy.RuleUse.Tokens {
 			if len(token.Groups) > 0 {
 				for _, group := range token.Groups {
 					if len(group.Approvals) > 0 {

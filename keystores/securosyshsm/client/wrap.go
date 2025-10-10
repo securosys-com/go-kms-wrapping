@@ -26,7 +26,6 @@ import (
 	"net/http"
 
 	helpers "github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/helpers"
-	"github.com/openbao/go-kms-wrapping/v2/kms"
 )
 
 // Function thats send wrap request to TSB
@@ -71,7 +70,7 @@ func (c *TSBClient) Wrap(wrapKeyName string, wrapKeyPassword string, keyToBeWrap
 }
 
 // Function thats sends asynchronous unwrap request to TSB
-func (c *TSBClient) AsyncUnWrap(wrappedKey string, label string, attributes map[string]bool, unwrapKeyName string, unwrapKeyPassword string, wrapMethod string, policy *kms.Policy, customMetaData map[string]string) (string, int, error) {
+func (c *TSBClient) AsyncUnWrap(wrappedKey string, label string, attributes map[string]bool, unwrapKeyName string, unwrapKeyPassword string, wrapMethod string, policy *helpers.Policy, customMetaData map[string]string) (string, int, error) {
 	charsPasswordJson, _ := json.Marshal(helpers.StringToCharArray(unwrapKeyPassword))
 	var additionalMetaDataInfo map[string]string = make(map[string]string)
 	additionalMetaDataInfo["wrapped key"] = wrappedKey
@@ -136,7 +135,7 @@ func (c *TSBClient) AsyncUnWrap(wrappedKey string, label string, attributes map[
 }
 
 // Function thats sends unwrap request to TSB
-func (c *TSBClient) UnWrap(wrappedKey string, label string, attributes map[string]bool, unwrapKeyName string, unwrapKeyPassword string, wrapMethod string, policy *kms.Policy) (int, error) {
+func (c *TSBClient) UnWrap(wrappedKey string, label string, attributes map[string]bool, unwrapKeyName string, unwrapKeyPassword string, wrapMethod string, policy *helpers.Policy) (int, error) {
 	charsPasswordJson, _ := json.Marshal(helpers.StringToCharArray(unwrapKeyPassword))
 	var policyString string
 	if policy == nil {

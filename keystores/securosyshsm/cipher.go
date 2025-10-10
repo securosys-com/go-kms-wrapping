@@ -3,11 +3,13 @@
 package securosyshsm
 
 import (
+	"context"
 	b64 "encoding/base64"
 	"errors"
+	"fmt"
 	"time"
 
-	"github.com/andreburgaud/crypt2go/padding"
+	//"github.com/andreburgaud/crypt2go/padding"
 	"github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/helpers"
 	kms "github.com/openbao/go-kms-wrapping/v2/kms"
 )
@@ -15,50 +17,69 @@ import (
 // Ensure KeyStore implements KeyStore
 var _ kms.Cipher = (*Cipher)(nil)
 
+//	type cipher struct {
+//		operation kms.CipherOperation
+//		//privateKey   *PrivateKey
+//		//secretKey    *SecretKey
+//		cipherParams *kms.CipherParameters
+//		buffer       []byte
+//	}
 type Cipher struct {
 	operation    kms.CipherOperation
-	key          *Key
+	key          *key
 	cipherParams *kms.CipherParameters
 	buffer       []byte
 }
 
-func (s *Cipher) Update(inputData []byte) (outputData []byte, err error) {
-	// Just buffer the input
-	s.buffer = append(s.buffer, inputData...)
-	return s.buffer, nil // nothing processed yet
+func (c *Cipher) Update(ctx context.Context, input []byte) (output []byte, err error) {
+	// Check for context cancellation before doing work
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	c.buffer = append(c.buffer, input...)
+	return c.buffer, nil // nothing processed yet
 }
 
-func (s *Cipher) Close(inputData []byte) (outputData []byte, iv []byte, mac []byte, err error) {
-	s.buffer = append(s.buffer, inputData...)
-	algorithm := s.cipherParams.Algorithm
+func (c *Cipher) Close(ctx context.Context, input []byte) (output []byte, err error) {
+	// Check for context cancellation before doing work
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	c.buffer = append(c.buffer, input...)
+	algorithm := c.cipherParams.Algorithm
 	cipherAlgorithm, err := helpers.MapCipherAlgorithm(algorithm)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	//Only Support AES encrypt/decrypt
-	if s.operation == kms.Decrypt {
-		payload, iv, mac, err := s.Decrypt(cipherAlgorithm)
-		return s.RemovePaddingIfNeeded(payload), iv, mac, err
+	if c.operation == kms.CipherOp_Decrypt {
+		payload, err := c.Decrypt(cipherAlgorithm)
+		return c.RemovePaddingIfNeeded(payload), err
 	} else {
-		s.AddPaddingIfNeeded()
-		return s.Encrypt(cipherAlgorithm)
+		c.AddPaddingIfNeeded()
+		return c.Encrypt(cipherAlgorithm)
 	}
+
 }
 
-func (s Cipher) DecryptAsyncRequest(additionalMetaData map[string]string) (string, error) {
+func (c *Cipher) DecryptAsyncRequest(additionalMetaData map[string]string) (string, error) {
 	tagLength := 0
-	encryptedPayload := s.buffer
+	encryptedPayload := c.buffer
 	vector := ""
 	aad := ""
-	algorithm := s.cipherParams.Algorithm
+	algorithm := c.cipherParams.Algorithm
 	cipherAlgorithm, err := helpers.MapCipherAlgorithm(algorithm)
 	if err != nil {
 		return "", err
 	}
 
-	result, _, err := s.key.client.AsyncDecrypt(
-		s.key.GetName(),
-		s.key.password,
+	result, _, err := c.key.client.AsyncDecrypt(
+		c.key.GetName(),
+		c.key.password,
 		b64.StdEncoding.EncodeToString(encryptedPayload),
 		vector,
 		cipherAlgorithm,
@@ -68,30 +89,38 @@ func (s Cipher) DecryptAsyncRequest(additionalMetaData map[string]string) (strin
 	)
 	return result, err
 }
-func (s Cipher) GetRequest(requestId string) (*helpers.RequestResponse, error) {
-	request, _, err := s.key.client.GetRequest(requestId)
+func (c *Cipher) GetRequest(requestId string) (*helpers.RequestResponse, error) {
+	request, _, err := c.key.client.GetRequest(requestId)
 	return request, err
 }
 
-func (s *Cipher) Decrypt(cipherAlgorithm string) (outputData []byte, iv []byte, mac []byte, err error) {
-	tagLength := 0
-	encryptedPayload := s.buffer
-	if s.cipherParams.MAC != nil {
-		tagLength = len(s.cipherParams.MAC) * 8
-		encryptedPayload = append(encryptedPayload, s.cipherParams.MAC...)
+func (c *Cipher) Decrypt(cipherAlgorithm string) (outputData []byte, err error) {
+	tagLength := 128
+	encryptedPayload := c.buffer
+	IV, encryptedPayload, MAC, err := c.splitCipherOutput(encryptedPayload)
+	if err != nil {
+		return nil, err
+	}
+	if MAC != nil {
+		tagLength = len(MAC) * 8
+		encryptedPayload = append(encryptedPayload, MAC...)
 	}
 	vector := ""
-	if s.cipherParams.IV != nil {
-		vector = b64.StdEncoding.EncodeToString(s.cipherParams.IV)
+	if IV != nil {
+		vector = b64.StdEncoding.EncodeToString(IV)
 	}
 	aad := ""
-	if s.cipherParams.AAD != nil {
-		aad = b64.StdEncoding.EncodeToString(s.cipherParams.AAD)
+	if c.cipherParams.Algorithm == kms.CipherMode_AES_GCM {
+		if params, ok := c.cipherParams.Parameters.(*kms.AESGCMCipherParameters); ok && params != nil {
+			if len(params.AAD) > 0 {
+				aad = b64.StdEncoding.EncodeToString(params.AAD)
+			}
+		}
 	}
-
-	result, _, err := s.key.client.AsyncDecrypt(
-		s.key.GetName(),
-		s.key.password,
+	var result string
+	result, _, err = c.key.client.AsyncDecrypt(
+		c.key.GetName(),
+		c.key.password,
 		b64.StdEncoding.EncodeToString(encryptedPayload),
 		vector,
 		cipherAlgorithm,
@@ -99,82 +128,91 @@ func (s *Cipher) Decrypt(cipherAlgorithm string) (outputData []byte, iv []byte, 
 		aad,
 		make(map[string]string),
 	)
-	request, _, err := s.key.client.GetRequest(result)
+
+	request, _, err := c.key.client.GetRequest(result)
 	for request.Status == "PENDING" {
 		if err != nil {
-			s.buffer = nil
-			return nil, nil, nil, err
+			c.buffer = nil
+			return nil, err
 		}
 		time.Sleep(5 * time.Second)
-		request, _, err = s.key.client.GetRequest(result)
+		request, _, err = c.key.client.GetRequest(result)
 	}
 	if request.Status != "EXECUTED" {
-		s.buffer = nil
-		return nil, nil, nil, errors.New("Decrypt failed to execute. Decrypt returned status: " + request.Status)
+		c.buffer = nil
+		return nil, errors.New("Decrypt failed to execute. Decrypt returned status: " + request.Status)
 	}
-	s.buffer = nil
+	c.buffer = nil
 	payload, _ := b64.StdEncoding.DecodeString(request.Result)
 
-	return payload, nil, nil, nil
+	return payload, nil
 
 }
-func (s *Cipher) RemovePaddingIfNeeded(payload []byte) []byte {
-	if s.key.GetType() == kms.AESKey {
-		switch s.cipherParams.Algorithm {
-		case kms.Cipher_AES_ECB:
-			padder := padding.NewPkcs7Padding(16)
-			payload, _ := padder.Unpad(payload)
-			return payload
-		case kms.Cipher_AES_CBC:
-			//case kms.Cipher_AES_CTR:
-			padder := padding.NewPkcs7Padding(16)
-			payload, _ := padder.Unpad(payload)
-			return payload
-		}
+func (c *Cipher) RemovePaddingIfNeeded(payload []byte) []byte {
+	if c.key.GetType() == kms.KeyType_AES {
+		//switch c.cipherParams.Algorithm {
+		//case kms.Cipher_AES_ECB:
+		//	padder := padding.NewPkcs7Padding(16)
+		//	payload, _ := padder.Unpad(payload)
+		//	return payload
+		//case kms.Cipher_AES_CBC:
+		//	//case kms.Cipher_AES_CTR:
+		//	padder := padding.NewPkcs7Padding(16)
+		//	payload, _ := padder.Unpad(payload)
+		//	return payload
+		//}
 
 	}
 	return payload
 
 }
-func (s *Cipher) AddPaddingIfNeeded() {
-	if s.key.GetType() == kms.AESKey {
-		switch s.cipherParams.Algorithm {
-		case kms.Cipher_AES_ECB:
-			padder := padding.NewPkcs7Padding(16)
-			s.buffer, _ = padder.Pad(s.buffer)
-			break
-		case kms.Cipher_AES_CBC:
-			//case kms.Cipher_AES_CTR:
-			padder := padding.NewPkcs7Padding(16)
-			s.buffer, _ = padder.Pad(s.buffer)
-			break
-		}
+func (c *Cipher) AddPaddingIfNeeded() {
+	if c.key.GetType() == kms.KeyType_AES {
+		//switch c.cipherParams.Algorithm {
+		//case kms.Cipher_AES_ECB:
+		//	padder := padding.NewPkcs7Padding(16)
+		//	c.buffer, _ = padder.Pad(c.buffer)
+		//	break
+		//case kms.Cipher_AES_CBC:
+		//	//case kms.Cipher_AES_CTR:
+		//	padder := padding.NewPkcs7Padding(16)
+		//	c.buffer, _ = padder.Pad(c.buffer)
+		//	break
+		//}
 
 	}
 
 }
-func (s *Cipher) Encrypt(cipherAlgorithm string) (outputData []byte, iv []byte, mac []byte, err error) {
+func (c *Cipher) Encrypt(cipherAlgorithm string) (outputData []byte, err error) {
 	aad := ""
-	if s.cipherParams.AAD != nil {
-		aad = b64.StdEncoding.EncodeToString(s.cipherParams.AAD)
+	if c.cipherParams.Algorithm == kms.CipherMode_AES_GCM {
+		if params, ok := c.cipherParams.Parameters.(*kms.AESGCMCipherParameters); ok && params != nil {
+			if len(params.AAD) > 0 {
+				aad = b64.StdEncoding.EncodeToString(params.AAD)
+			}
+		}
 	}
+
+	//.AAD != nil {
+	//	aad = b64.StdEncoding.EncodeToString(c.cipherParams.AAD)
+	//}
 	tagLength := 0
-	if s.cipherParams.Algorithm == kms.Cipher_AES_GCM {
+	if c.cipherParams.Algorithm == kms.CipherMode_AES_GCM {
 		tagLength = 128
 	} else {
 		tagLength = -1
 	}
-	encrypt, _, err := s.key.client.Encrypt(
-		s.key.GetName(),
-		s.key.password,
-		b64.StdEncoding.EncodeToString(s.buffer),
+	encrypt, _, err := c.key.client.Encrypt(
+		c.key.GetName(),
+		c.key.password,
+		b64.StdEncoding.EncodeToString(c.buffer),
 		cipherAlgorithm,
 		tagLength,
 		aad,
 	)
 	if err != nil {
-		s.buffer = nil
-		return nil, nil, nil, err
+		c.buffer = nil
+		return nil, err
 	}
 	var encryptedPayload []byte
 	if encrypt.EncryptedPayloadWithoutMessageAuthenticationCode == "" {
@@ -193,30 +231,87 @@ func (s *Cipher) Encrypt(cipherAlgorithm string) (outputData []byte, iv []byte, 
 	if encrypt.MessageAuthenticationCode != nil {
 		messageAuthenticationCode, _ = b64.StdEncoding.DecodeString(*encrypt.MessageAuthenticationCode)
 	}
-	s.buffer = nil
-	return encryptedPayload, initializationVector, messageAuthenticationCode, nil
+	c.buffer = nil
+	return c.combineCipherOutput(initializationVector, encryptedPayload, messageAuthenticationCode), nil
 
+}
+func (c *Cipher) combineCipherOutput(initializationVector, encryptedPayload, messageAuthenticationCode []byte) []byte {
+	if c.cipherParams.Algorithm == kms.CipherMode_AES_GCM {
+		totalLen := len(initializationVector) + len(encryptedPayload) + len(messageAuthenticationCode)
+		combined := make([]byte, 0, totalLen)
+
+		combined = append(combined, initializationVector...)
+		combined = append(combined, encryptedPayload...)
+		combined = append(combined, messageAuthenticationCode...)
+
+		return combined
+
+	} else {
+		out := make([]byte, len(encryptedPayload))
+		copy(out, encryptedPayload)
+		return out
+
+	}
+}
+func (c *Cipher) splitCipherOutput(output []byte) (initializationVector, encryptedPayload, messageAuthenticationCode []byte, err error) {
+
+	if c.cipherParams.Algorithm == kms.CipherMode_AES_GCM {
+		const ivSize = 12 // standard AES-GCM IV size
+		macSize := 128 / 8
+
+		if len(output) < ivSize+macSize {
+			return nil, nil, nil, fmt.Errorf("cipher: invalid AES-GCM ciphertext length")
+		}
+
+		initializationVector = output[:ivSize]
+		encryptedPayload = output[ivSize : len(output)-macSize]
+		messageAuthenticationCode = output[len(output)-macSize:]
+
+		return initializationVector, encryptedPayload, messageAuthenticationCode, nil
+
+	} else {
+		return nil, output, nil, nil
+	}
 }
 
 type CipherFactory struct {
 }
 
+func (c CipherFactory) NewCipher(ctx context.Context, operation kms.CipherOperation, cipherParams *kms.CipherParameters) (kms.Cipher, error) {
+	privateKey := PrivateKeyFromContext(ctx)
+	if privateKey != nil {
+		return &Cipher{
+			operation:    operation,
+			key:          &privateKey.key,
+			cipherParams: cipherParams,
+		}, nil
+
+	}
+	secretKey := SecretKeyFromContext(ctx)
+	if secretKey != nil {
+		return &Cipher{
+			operation:    operation,
+			key:          &secretKey.key,
+			cipherParams: cipherParams,
+		}, nil
+
+	}
+
+	return nil, errors.New("cipherFactory needs a key")
+}
+
 // Ensure KeyStoreFactory implements KeyStoreFactory
 var _ kms.CipherFactory = (*CipherFactory)(nil)
 
-func (s CipherFactory) NewCipher(operation kms.CipherOperation, key kms.Key, cipherParams *kms.CipherParameters) (kms.Cipher, error) {
-	sk, ok := key.(*Key)
-	if !ok {
-		return nil, errors.New("invalid key type: not Key")
-	}
-	return &Cipher{
-		operation:    operation,
-		key:          sk,
-		cipherParams: cipherParams,
-	}, nil
-
-}
-func NewCipher(operation kms.CipherOperation, key kms.Key, cipherParams *kms.CipherParameters) (kms.Cipher, error) {
-	factory := &CipherFactory{}
-	return factory.NewCipher(operation, key, cipherParams)
-}
+//func (s CipherFactory) NewCipher(operation kms.CipherOperation, key kms.Key, cipherParams *kms.CipherParameters) (kms.Cipher, error) {
+//	sk, ok := key.(*Key)
+//	if !ok {
+//		return nil, errors.New("invalid key type: not Key")
+//	}
+//	return &Cipher{
+//		operation:    operation,
+//		key:          sk,
+//		cipherParams: cipherParams,
+//	}, nil
+//
+//}

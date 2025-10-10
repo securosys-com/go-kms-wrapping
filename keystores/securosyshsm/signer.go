@@ -3,6 +3,7 @@
 package securosyshsm
 
 import (
+	"context"
 	b64 "encoding/base64"
 	"errors"
 	"time"
@@ -12,25 +13,54 @@ import (
 )
 
 // Ensure KeyStore implements KeyStore
-var _ kms.Signer = (*Signer)(nil)
+var _ kms.Signer = (*signer)(nil)
 
-type Signer struct {
-	key          *Key
+type signer struct {
+	key          *PrivateKey
 	signerParams *kms.SignerParameters
 	buffer       []byte
+	digest       bool
 }
 
-func (s *Signer) Update(data []byte) error {
+func (s *signer) Update(ctx context.Context, data []byte) error {
+	// Check for context cancellation before doing work
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	s.buffer = append(s.buffer, data...)
 	return nil
 }
-
-func (s *Signer) Close(data []byte) (signature []byte, err error) {
-	s.buffer = append(s.buffer, data...)
-	return s.Sign()
+func (s *signer) DigestProvided(ctx context.Context) (err error) {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	s.digest = true
+	// Check for context cancellation before doing work
+	return nil
 }
-func (s *Signer) Sign() ([]byte, error) {
-	signatureAlgorithm, _ := helpers.MapSignAlgorithm(s.signerParams.Algorithm)
+func (s *signer) Close(ctx context.Context, data []byte) (signature []byte, err error) {
+	// Check for context cancellation before doing work
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	s.buffer = append(s.buffer, data...)
+	return s.Sign(ctx)
+}
+
+func (s *signer) Sign(ctx context.Context) ([]byte, error) {
+	// Check for context cancellation before doing work
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	signatureAlgorithm, _ := helpers.MapSignAlgorithm(s.signerParams.Algorithm, s.digest)
 	result, _, err := s.key.client.AsyncSign(
 		s.key.GetName(),
 		s.key.password,
@@ -68,21 +98,39 @@ type SignerFactory struct {
 // Ensure KeyStoreFactory implements KeyStoreFactory
 var _ kms.SignerFactory = (*SignerFactory)(nil)
 
-func (s SignerFactory) NewSigner(privateKey kms.Key, signerParams *kms.SignerParameters) (kms.Signer, error) {
-	if privateKey.GetType() != kms.PrivateRSAKey && privateKey.GetType() != kms.PrivateECKey {
-		return nil, errors.New("invalid key type. Only RSA and EC keys are supported")
+func (s SignerFactory) DigestSign(ctx context.Context, signerParams *kms.SignerParameters, digest []byte) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
 	}
-	sk, ok := privateKey.(*Key)
-	if !ok {
-		return nil, errors.New("invalid key type: not Key")
+	newSigner, err := s.NewSigner(ctx, signerParams)
+	if err != nil {
+		return nil, err
 	}
-	return &Signer{
-		key:          sk,
-		signerParams: signerParams,
-	}, nil
+	signer := newSigner.(*signer)
+	err = signer.DigestProvided(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	bytes, err := signer.Close(ctx, digest)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, nil
+
 }
 
-func NewSigner(privateKey kms.Key, signerParams *kms.SignerParameters) (kms.Signer, error) {
-	factory := &SignerFactory{}
-	return factory.NewSigner(privateKey, signerParams)
+func (s SignerFactory) NewSigner(ctx context.Context, signerParams *kms.SignerParameters) (kms.Signer, error) {
+	privateKey := PrivateKeyFromContext(ctx)
+	if privateKey.GetType() != kms.KeyType_RSA_Private && privateKey.GetType() != kms.KeyType_EC_Private && privateKey.GetType() != kms.KeyType_ED_Private {
+		return nil, errors.New("invalid key type. Only RSA, EC or ED keys are supported")
+	}
+
+	return &signer{
+		key:          privateKey,
+		signerParams: signerParams,
+		digest:       false,
+	}, nil
 }

@@ -4,7 +4,12 @@ package securosyshsm
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
 
 	"github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/client"
 	"github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/helpers"
@@ -13,6 +18,11 @@ import (
 
 // Ensure KeyStore implements KeyStore
 var _ kms.Key = (*key)(nil)
+
+var (
+	_ kms.AsymmetricKey = (*PublicKey)(nil)
+	_ kms.AsymmetricKey = (*PrivateKey)(nil)
+)
 
 type key struct {
 	key      helpers.KeyAttributes
@@ -122,6 +132,89 @@ func (s key) GetKeyAttributes() *kms.KeyAttributes {
 	}
 	return &keyAttributes
 }
+
+type SecretKey struct {
+	key
+}
+
+type PublicKey struct {
+	key
+	publicKeyString string
+}
+
+func (p *PublicKey) GetPublic(ctx context.Context) (kms.Key, error) {
+	return p, nil
+}
+
+func (p *PublicKey) ExportPublic(ctx context.Context) ([]byte, error) {
+	if p.publicKeyString == "" {
+		return nil, errors.New("public key string is empty")
+	}
+
+	// Try to decode PEM first
+	block, _ := pem.Decode([]byte(p.publicKeyString))
+	if block != nil {
+		// It’s a valid PEM — just return DER bytes
+		return block.Bytes, nil
+	}
+
+	// Not PEM → try Base64 decode (no headers)
+	derBytes, err := base64.StdEncoding.DecodeString(p.publicKeyString)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 public key: %w", err)
+	}
+
+	// Optional: verify it’s a valid public key
+	_, err = x509.ParsePKIXPublicKey(derBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ASN.1 public key: %w", err)
+	}
+	return derBytes, nil
+}
+
+func (p *PublicKey) ExportComponentPublic(ctx context.Context) (interface{}, error) {
+	return nil, nil
+}
+
+type PrivateKey struct {
+	key
+	publicKeyString string
+}
+
+func (p *PrivateKey) GetPublic(ctx context.Context) (kms.Key, error) {
+	return p, nil
+}
+
+func (p *PrivateKey) ExportPublic(ctx context.Context) ([]byte, error) {
+	if p.publicKeyString == "" {
+		return nil, errors.New("public key string is empty")
+	}
+
+	// Try to decode PEM first
+	block, _ := pem.Decode([]byte(p.publicKeyString))
+	if block != nil {
+		// It’s a valid PEM — just return DER bytes
+		return block.Bytes, nil
+	}
+
+	// Not PEM → try Base64 decode (no headers)
+	derBytes, err := base64.StdEncoding.DecodeString(p.publicKeyString)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 public key: %w", err)
+	}
+
+	// Optional: verify it’s a valid public key
+	_, err = x509.ParsePKIXPublicKey(derBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ASN.1 public key: %w", err)
+	}
+	return derBytes, nil
+}
+
+func (p *PrivateKey) ExportComponentPublic(ctx context.Context) (interface{}, error) {
+	return nil, nil
+}
+
 func convertPolicyToMap(policy *helpers.Policy) map[string]interface{} {
 	if policy == nil {
 		return nil
@@ -136,4 +229,41 @@ func convertPolicyToMap(policy *helpers.Policy) map[string]interface{} {
 		return nil
 	}
 	return result
+}
+func WithPrivateKey(ctx context.Context, key *PrivateKey) context.Context {
+	return context.WithValue(ctx, kms.CONTEXT_KEY_NAME, key)
+}
+func WithPublicKey(ctx context.Context, key *PublicKey) context.Context {
+	return context.WithValue(ctx, kms.CONTEXT_KEY_NAME, key)
+}
+func WithSecretKey(ctx context.Context, key *SecretKey) context.Context {
+	return context.WithValue(ctx, kms.CONTEXT_KEY_NAME, key)
+}
+
+func PrivateKeyFromContext(ctx context.Context) *PrivateKey {
+	val := ctx.Value(kms.CONTEXT_KEY_NAME)
+	ctxValue, ok := val.(*PrivateKey)
+	if !ok {
+		// handle missing or wrong type safely
+		return nil // or return an error
+	}
+	return ctxValue
+}
+func PublicKeyFromContext(ctx context.Context) *PublicKey {
+	val := ctx.Value(kms.CONTEXT_KEY_NAME)
+	ctxValue, ok := val.(*PublicKey)
+	if !ok {
+		// handle missing or wrong type safely
+		return nil // or return an error
+	}
+	return ctxValue
+}
+func SecretKeyFromContext(ctx context.Context) *SecretKey {
+	val := ctx.Value(kms.CONTEXT_KEY_NAME)
+	ctxValue, ok := val.(*SecretKey)
+	if !ok {
+		// handle missing or wrong type safely
+		return nil // or return an error
+	}
+	return ctxValue
 }

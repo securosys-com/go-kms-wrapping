@@ -25,11 +25,10 @@ import (
 	"net/http"
 
 	helpers "github.com/openbao/go-kms-wrapping/keystores/securosyshsm/v2/helpers"
-	"github.com/openbao/go-kms-wrapping/v2/kms"
 )
 
 // Function thats send request modify key to TSB
-func (c *TSBClient) Modify(label string, password string, policy kms.Policy) (int, error) {
+func (c *TSBClient) Modify(label string, password string, policy helpers.Policy) (int, error) {
 	policyJson, _ := json.Marshal(policy)
 	policyString := string(`,"policy":` + string(policyJson))
 
@@ -60,7 +59,7 @@ func (c *TSBClient) Modify(label string, password string, policy kms.Policy) (in
 }
 
 // Function thats send asynchronous request modify key to TSB
-func (c *TSBClient) AsyncModify(label string, password string, policy kms.Policy, customMetaData map[string]string) (string, int, error) {
+func (c *TSBClient) AsyncModify(label string, password string, policy helpers.Policy, customMetaData map[string]string) (string, int, error) {
 	var additionalMetaDataInfo map[string]string = make(map[string]string)
 	metaDataB64, metaDataSignature, err := c.PrepareMetaData("Modify", additionalMetaDataInfo, customMetaData)
 	if err != nil {
