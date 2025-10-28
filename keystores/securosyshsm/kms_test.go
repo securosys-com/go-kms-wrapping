@@ -13,7 +13,7 @@ import (
 )
 
 var provider = map[string]interface{}{
-	"restapi": "https://engineering.securosys.com/tsb-demo",
+	"restapi": "TSB_URL",
 	"auth":    "NONE",
 }
 
