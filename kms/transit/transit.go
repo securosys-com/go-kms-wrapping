@@ -43,19 +43,20 @@ type transitKMS struct {
 
 func (k *transitKMS) Open(ctx context.Context, opts *kms.OpenOptions) error {
 	var cfg struct {
-		Address        string `mapstructure:"address"`
-		Token          string `mapstructure:"token"`
-		Namespace      string `mapstructure:"namespace"`
-		MountPath      string `mapstructure:"mount_path"`
-		DisableRenewal bool   `mapstructure:"disable_renewal"`
+		Address       string `mapstructure:"address"`
+		Token         string `mapstructure:"token"`
+		Namespace     string `mapstructure:"namespace"`
+		MountPath     string `mapstructure:"mount_path"`
+		EnableRenewal bool   `mapstructure:"enable_renewal"`
 
-		TLSCaCert     string `mapstructure:"tls_ca_cert"`
 		TLSServerName string `mapstructure:"tls_server_name"`
 		TLSSkipVerify bool   `mapstructure:"tls_skip_verify"`
 
-		// This is missing client cert configuration, but that is blocked on
-		// https://github.com/openbao/openbao/issues/2762.
+		TLSCACertBytes     string `mapstructure:"tls_ca_cert_bytes"`
+		TLSClientCertBytes string `mapstructure:"tls_client_cert_bytes"`
+		TLSClientKeyBytes  string `mapstructure:"tls_client_key_bytes"`
 	}
+
 	if err := mapstructure.WeakDecode(opts.ConfigMap, &cfg); err != nil {
 		return err
 	}
@@ -64,26 +65,32 @@ func (k *transitKMS) Open(ctx context.Context, opts *kms.OpenOptions) error {
 		return errors.New("missing required parameter 'token'")
 	}
 
-	// TODO(satoqz): This reads environment variables, and we don't have a good
-	// way around it yet. Fix this once the api package offers ways to create a
-	// clean config.
-	apiConfig := api.DefaultConfig()
-	if cfg.Address != "" {
-		apiConfig.Address = cfg.Address
+	var apiConfig *api.Config
+
+	if opts.AllowEnvironment {
+		apiConfig = api.DefaultConfig()
+	} else {
+		apiConfig = api.NewConfig()
 	}
 
-	if cfg.TLSCaCert != "" || cfg.TLSServerName != "" || cfg.TLSSkipVerify {
+	if cfg.Address != "" {
+		apiConfig.Address = cfg.Address
+	} else {
+		apiConfig.Address = "https://127.0.0.1:8200"
+	}
+
+	if cfg.TLSSkipVerify || cmp.Or(cfg.TLSCACertBytes, cfg.TLSClientCertBytes, cfg.TLSClientKeyBytes, cfg.TLSServerName) != "" {
 		if err := apiConfig.ConfigureTLS(&api.TLSConfig{
-			CACertBytes:   []byte(cfg.TLSCaCert),
-			TLSServerName: cfg.TLSServerName,
-			Insecure:      cfg.TLSSkipVerify,
+			CACertBytes:     []byte(cfg.TLSCACertBytes),
+			ClientCertBytes: []byte(cfg.TLSClientCertBytes),
+			ClientKeyBytes:  []byte(cfg.TLSClientKeyBytes),
+			TLSServerName:   cfg.TLSServerName,
+			Insecure:        cfg.TLSSkipVerify,
 		}); err != nil {
 			return err
 		}
 	}
 
-	// TODO(satoqz): This also reads environment variables, with no way to
-	// circumvent it at all.
 	client, err := api.NewClient(apiConfig)
 	if err != nil {
 		return err
@@ -99,7 +106,7 @@ func (k *transitKMS) Open(ctx context.Context, opts *kms.OpenOptions) error {
 	}
 
 	var lifetimeWatcher *api.LifetimeWatcher
-	if !cfg.DisableRenewal {
+	if cfg.EnableRenewal {
 		// Renew the token immediately to get a secret to pass to lifetime
 		// watcher.
 		secret, err := client.Auth().Token().RenewTokenAsSelf(client.Token(), 0)
