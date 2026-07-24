@@ -16,7 +16,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/go-viper/mapstructure/v2"
 	"github.com/miekg/pkcs11"
 	"github.com/openbao/go-kms-wrapping/kms/pkcs11/v2/internal/module"
 	"github.com/openbao/go-kms-wrapping/kms/pkcs11/v2/internal/session"
@@ -62,15 +61,7 @@ func (p *pkcs11KMS) Open(ctx context.Context, opts *kms.OpenOptions) error {
 		DisableSoftwareEncryption bool `mapstructure:"disable_software_encryption"`
 	}
 
-	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
-		Result:           &cfg,
-		ErrorUnused:      true,
-		WeaklyTypedInput: true,
-	})
-	if err != nil {
-		return err
-	}
-	if err := decoder.Decode(opts.ConfigMap); err != nil {
+	if err := kms.DecodeConfigMap(&cfg, opts.ConfigMap); err != nil {
 		return err
 	}
 
@@ -133,15 +124,7 @@ func (p *pkcs11KMS) GetKey(ctx context.Context, opts *kms.KeyOptions) (kms.Key, 
 		RSAOAEPHash string `mapstructure:"rsa_oaep_hash"`
 	}
 
-	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
-		Result:           &cfg,
-		ErrorUnused:      true,
-		WeaklyTypedInput: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := decoder.Decode(opts.ConfigMap); err != nil {
+	if err := kms.DecodeConfigMap(&cfg, opts.ConfigMap); err != nil {
 		return nil, err
 	}
 
