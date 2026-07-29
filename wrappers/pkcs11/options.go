@@ -10,71 +10,35 @@ import (
 
 // getOpts iterates the inbound Options and returns a struct
 func getOpts(opt ...wrapping.Option) (*options, error) {
-	// First, separate out options into local and global
 	opts := getDefaultOptions()
-	var wrappingOptions []wrapping.Option
-	var localOptions []OptionFunc
-	for _, o := range opt {
-		if o == nil {
-			continue
-		}
-		iface := o()
-		switch to := iface.(type) {
-		case wrapping.OptionFunc:
-			wrappingOptions = append(wrappingOptions, o)
-		case OptionFunc:
-			localOptions = append(localOptions, to)
-		}
-	}
 
-	// Parse the global options
 	var err error
-	opts.Options, err = wrapping.GetOpts(wrappingOptions...)
+	opts.Options, err = wrapping.GetOpts(opt...)
 	if err != nil {
 		return nil, err
 	}
 
-	// Don't ever return blank options
-	if opts.Options == nil {
-		opts.Options = new(wrapping.Options)
-	}
-
-	// Local options can be provided either via the WithConfigMap field
-	// (for over the plugin barrier or embedding) or via local option functions
-	// (for embedding). First pull from the option.
-	if opts.WithConfigMap != nil {
-		for k, v := range opts.WithConfigMap {
-			switch k {
-			// case "key_id", "kms_key_id": // deprecated backend-specific value, set global
-			case "key_id":
-				opts.withKeyId = v
-			case "slot":
-				opts.withSlot = v
-			case "pin":
-				opts.withPin = v
-			case "lib", "module":
-				opts.withLib = v
-			case "token", "token_label":
-				opts.withTokenLabel = v
-			case "label", "key_label":
-				opts.withKeyLabel = v
-			case "mechanism":
-				opts.withMechanism = v
-			case "rsa_oaep_hash":
-				opts.withRsaOaepHash = v
-			case "disable_software_encryption":
-				opts.withDisableSoftwareEncryption = v
-			}
-		}
-	}
-
-	// Now run the local options functions. This may overwrite options set by
-	// the options above.
-	for _, o := range localOptions {
-		if o != nil {
-			if err := o(&opts); err != nil {
-				return nil, err
-			}
+	for k, v := range opts.WithConfigMap {
+		switch k {
+		// case "key_id", "kms_key_id": // deprecated backend-specific value, set global
+		case "key_id":
+			opts.withKeyId = v
+		case "slot":
+			opts.withSlot = v
+		case "pin":
+			opts.withPin = v
+		case "lib", "module":
+			opts.withLib = v
+		case "token", "token_label":
+			opts.withTokenLabel = v
+		case "label", "key_label":
+			opts.withKeyLabel = v
+		case "mechanism":
+			opts.withMechanism = v
+		case "rsa_oaep_hash":
+			opts.withRsaOaepHash = v
+		case "disable_software_encryption":
+			opts.withDisableSoftwareEncryption = v
 		}
 	}
 
@@ -86,9 +50,6 @@ func getOpts(opt ...wrapping.Option) (*options, error) {
 
 	return &opts, nil
 }
-
-// OptionFunc holds a function with local options
-type OptionFunc func(*options) error
 
 // options = how options are represented
 type options struct {
